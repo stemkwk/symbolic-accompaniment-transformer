@@ -13,7 +13,7 @@
 #   - Project layout is intact
 #   - Tokenized data is present and meta files exist
 # Installs:
-#   - `pip install -e ".[dev]"` (skipped if already installed)
+#   - `pip install -e ".[train,dev]"` (skipped if already installed)
 #
 # Environment variables:
 #   SKIP_INSTALL=1   skip pip install (when the host image already has it)
@@ -44,8 +44,8 @@ log_section "Install package"
 if [[ "${SKIP_INSTALL:-0}" == "1" ]]; then
     log_warn "SKIP_INSTALL=1 — not running pip install."
 else
-    log_step "pip install -e .[dev] ${PIP_EXTRA:-}"
-    python -m pip install -e ".[dev]" ${PIP_EXTRA:-}
+    log_step "pip install -e .[train,dev] ${PIP_EXTRA:-}"
+    python -m pip install -e ".[train,dev]" ${PIP_EXTRA:-}
 fi
 
 log_section "Tokenized data"

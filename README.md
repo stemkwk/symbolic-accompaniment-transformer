@@ -175,10 +175,23 @@ project_transformer/
 
 ## 🚀 5. Quickstart & Essential Workflows
 
-### A. 로컬 환경 초간단 실행 (1분 개발자 검증)
+### A. 역할별 설치 (Extra Groups)
+
+| 역할 | 커맨드 |
+|---|---|
+| 학습 (서버) | `pip install -e ".[train,dev]"` |
+| 추론 CLI only | `pip install -e ".[render,audio]"` |
+| 웹 데모 | `pip install -e ".[render,audio,demo]"` |
+| 전체 (학습 + 추론 + 데모) | `pip install -e ".[train,dev,render,audio,demo]"` |
+
+> **pytorch-lightning**은 학습(`[train]`)에만 필요합니다. 추론·시연 환경에는 설치하지 않아도 됩니다.
+
+---
+
+### B. 로컬 환경 초간단 실행 (1분 개발자 검증)
 ```bash
-# 1. 의존성 패키지 및 개발용 유틸리티 설치
-pip install -e ".[dev]"
+# 1. 의존성 패키지 및 개발용 유틸리티 설치 (학습 + 개발 도구)
+pip install -e ".[train,dev]"
 
 # 2. 인공합성 음악 데이터를 이용한 초고속 토큰 빌드
 python scripts/prepare_data.py --synthetic --num_songs 32 --out_dir data/processed
@@ -195,7 +208,7 @@ pytest -q
 
 ---
 
-### B. 서버 환경 GPU 제로-바틀넥(Zero-Idle) 트레이닝 레시피
+### C. 서버 환경 GPU 제로-바틀넥(Zero-Idle) 트레이닝 레시피
 GPU 클라우드를 대여할 때, 비싼 서버 비용이 낭비되지 않도록 모든 전처리 작업을 로컬(CPU)에서 마치고 서버로 전송하는 최적화 워크플로우입니다.
 
 ```bash
@@ -227,7 +240,7 @@ docker compose run --rm train python scripts/train.py --epochs 200
 
 ---
 
-### C. 📊 학술 비교 평가 실행기 (compare_inference.py)
+### D. 📊 학술 비교 평가 실행기 (compare_inference.py)
 특정 곡에 대해 원본(GT) 반주와 다양한 설정(`T=1.0`, `T=0.7`, `CFG=2.0` 등)으로 생성된 반주의 품질 및 다이내믹을 한 번에 비교 분석합니다.
 
 ```bash
@@ -247,7 +260,7 @@ python scripts/compare_inference.py \
 
 ---
 
-### D. 📦 대용량 바이너리 자산 패키징 및 공유 (package_assets.py)
+### E. 📦 대용량 바이너리 자산 패키징 및 공유 (package_assets.py)
 Git 관리에서 제외된 대용량 이진 자산들(`checkpoints/`, `soundfonts/`, `data/raw/`, `data/processed/`)을 단일 `.zip` 아카이브로 신속하게 패키징해 **GitHub Releases의 Release Asset으로 업로드**하고 동료 연구원들과 공유할 때 활용합니다.
 
 > [!TIP]

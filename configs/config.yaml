@@ -206,6 +206,26 @@ humanize:
   timing_std_ms: 8.0      # gaussian std for note-on timing jitter (milliseconds)
   duration_std_ms: 5.0    # gaussian std for note duration jitter (milliseconds)
 
+dsp:
+  # Post-processing effects chain applied to rendered WAV output.
+  # Reverb → Compressor → Limiter
+  enabled: true
+  # Reverb: adds room/space feel — biggest improvement for dry MIDI audio
+  reverb: true
+  reverb_room_size: 0.25   # 0–1: larger = bigger room
+  reverb_damping: 0.5      # 0–1: higher = more high-freq absorption
+  reverb_wet_level: 0.18
+  reverb_dry_level: 0.82
+  # Compressor: glues the mix, controls velocity dynamics
+  compressor: true
+  compressor_threshold_db: -18.0
+  compressor_ratio: 4.0
+  compressor_attack_ms: 5.0
+  compressor_release_ms: 100.0
+  # Limiter: prevents clipping on final output
+  limiter: true
+  limiter_threshold_db: -1.0
+
 audio_input:
   # Spectral noise reduction via noisereduce (applied before basic-pitch).
   # Recommended for mic recordings in noisy environments.

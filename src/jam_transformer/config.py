@@ -150,6 +150,26 @@ class HumanizeConfig:
 
 
 @dataclass
+class DspConfig:
+    enabled: bool = True
+    # Reverb — adds room/space feel (biggest improvement for dry MIDI audio)
+    reverb: bool = True
+    reverb_room_size: float = 0.25   # 0–1: larger = bigger room
+    reverb_damping: float = 0.5      # 0–1: higher = more high-freq absorption
+    reverb_wet_level: float = 0.18   # reverb send level
+    reverb_dry_level: float = 0.82   # dry signal level
+    # Compressor — glues mix, evens out velocity dynamics
+    compressor: bool = True
+    compressor_threshold_db: float = -18.0
+    compressor_ratio: float = 4.0
+    compressor_attack_ms: float = 5.0
+    compressor_release_ms: float = 100.0
+    # Limiter — prevents clipping on final output
+    limiter: bool = True
+    limiter_threshold_db: float = -1.0
+
+
+@dataclass
 class AudioInputConfig:
     # Noise reduction (noisereduce spectral gating)
     denoise: bool = False
@@ -203,6 +223,7 @@ class AppConfig:
     humanize: HumanizeConfig = field(default_factory=HumanizeConfig)
     audio_input: AudioInputConfig = field(default_factory=AudioInputConfig)
     midi_output: MidiOutputConfig = field(default_factory=MidiOutputConfig)
+    dsp: DspConfig = field(default_factory=DspConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -248,4 +269,5 @@ def load_config(path: str | Path) -> AppConfig:
         humanize=_populate(HumanizeConfig, raw.get("humanize"), "humanize"),
         audio_input=_populate(AudioInputConfig, raw.get("audio_input"), "audio_input"),
         midi_output=midi_output,
+        dsp=_populate(DspConfig, raw.get("dsp"), "dsp"),
     )

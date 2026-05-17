@@ -66,6 +66,8 @@ soundfonts/*
 # 5. 빌드 및 배포 번들 (Build & Deployment Bundles)
 # ==========================================
 jam_tx_bundle.*
+jam_light_assets.zip
+jam_assets_bundle.zip
 
 # ==========================================
 # 6. Python 캐시 및 빌드 파일 (Python Caches & Builds)

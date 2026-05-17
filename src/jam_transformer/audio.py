@@ -165,6 +165,55 @@ def _find_soundfont(configured: str | None) -> str | None:
     return None
 
 
+def apply_dsp(wav_path: Path, out_path: Path, dsp_cfg) -> None:
+    """Apply Reverb → Compressor → Limiter chain via pedalboard.
+
+    Writes processed audio to *out_path* (can be the same as *wav_path*).
+    Requires: pip install 'jam_transformer[render]'  (pedalboard, soundfile)
+    """
+    try:
+        import soundfile as sf
+        from pedalboard import Compressor, Limiter, Pedalboard, Reverb
+    except ImportError:
+        raise ImportError(
+            "pedalboard and soundfile are required for DSP effects. "
+            "Run: pip install 'jam_transformer[render]'"
+        )
+
+    if not dsp_cfg.enabled:
+        if wav_path != out_path:
+            import shutil
+            shutil.copy2(wav_path, out_path)
+        return
+
+    audio, sr = sf.read(str(wav_path), always_2d=True)  # (samples, channels)
+    audio = audio.T.astype("float32")                   # (channels, samples)
+
+    effects = []
+    if dsp_cfg.reverb:
+        effects.append(Reverb(
+            room_size=dsp_cfg.reverb_room_size,
+            damping=dsp_cfg.reverb_damping,
+            wet_level=dsp_cfg.reverb_wet_level,
+            dry_level=dsp_cfg.reverb_dry_level,
+        ))
+    if dsp_cfg.compressor:
+        effects.append(Compressor(
+            threshold_db=dsp_cfg.compressor_threshold_db,
+            ratio=dsp_cfg.compressor_ratio,
+            attack_ms=dsp_cfg.compressor_attack_ms,
+            release_ms=dsp_cfg.compressor_release_ms,
+        ))
+    if dsp_cfg.limiter:
+        effects.append(Limiter(threshold_db=dsp_cfg.limiter_threshold_db))
+
+    board = Pedalboard(effects)
+    processed = board(audio, sr).T  # back to (samples, channels)
+
+    sf.write(str(out_path), processed, sr)
+    logger.info(f"DSP applied ({len(effects)} effects) → {out_path}")
+
+
 def render_midi_to_wav(midi_path: Path, wav_path: Path,
                        soundfont: str, sample_rate: int) -> None:
     """Render a MIDI file to WAV using FluidSynth.

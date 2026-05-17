@@ -9,7 +9,6 @@ description = "Symbolic vocal-melody → accompaniment Transformer."
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.1",
-    "pytorch-lightning>=2.2",
     "miditoolkit>=1.0.0",
     "pretty_midi>=0.2.10",
     "numpy",
@@ -20,15 +19,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+train = [
+    "pytorch-lightning>=2.2",  # LightningModule, Trainer, callbacks
+    "wandb",                   # experiment tracking (optional but recommended)
+]
 dev = [
     "pytest",
     "pytest-timeout",   # @pytest.mark.timeout used in test_dynamics.py
-    "wandb",
     "zstandard",        # package_for_server.py --compress zst (default)
 ]
 render = [
     "pyfluidsynth",       # optional MIDI → WAV at inference time
     "scipy",
+    "pedalboard",         # DSP effects chain (reverb, compressor, limiter)
+    "soundfile",          # audio I/O for pedalboard
 ]
 audio = [
     "basic-pitch",        # audio (WAV/MP3) → MIDI transcription at inference time
@@ -38,6 +42,7 @@ audio = [
 ]
 demo = [
     "gradio>=4.0",        # web demo (app.py)
+    "librosa",            # BPM auto-detection in loop station mode
 ]
 
 [tool.setuptools.packages.find]

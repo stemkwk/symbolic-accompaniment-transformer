@@ -21,7 +21,7 @@ except ImportError:
 
 import torch
 
-from jam_transformer.audio import audio_to_midi, record_from_mic, render_midi_to_wav
+from jam_transformer.audio import apply_dsp, audio_to_midi, record_from_mic, render_midi_to_wav
 from jam_transformer.config import load_config
 from jam_transformer.logger import logger
 from jam_transformer.overrides import apply_overrides
@@ -189,8 +189,13 @@ def main() -> None:
     logger.info(f"Wrote {out_path}")
 
     if icfg.render_audio:
-        render_midi_to_wav(out_path, out_path.with_suffix(".wav"),
-                           icfg.soundfont, icfg.sample_rate)
+        wav_path = out_path.with_suffix(".wav")
+        render_midi_to_wav(out_path, wav_path, icfg.soundfont, icfg.sample_rate)
+        if wav_path.exists():
+            try:
+                apply_dsp(wav_path, wav_path, cfg.dsp)
+            except ImportError:
+                logger.warning("pedalboard not installed — skipping DSP effects.")
 
 
 if __name__ == "__main__":

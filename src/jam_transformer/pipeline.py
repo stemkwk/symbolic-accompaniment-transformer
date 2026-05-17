@@ -13,33 +13,53 @@ from jam_transformer.tokenizer import BaseTokenizer
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
-def load_checkpoint(ckpt_path: str, cfg, vocab_size: int):
-    """Load a checkpoint into a JamTransformerLightning module.
+class _InferenceModel:
+    """Thin wrapper around the raw model for inference without pytorch-lightning."""
 
-    Handles torch.compile'd checkpoints transparently by stripping the
-    ``_orig_mod.`` prefix when the current module is not compiled.
+    def __init__(self, model):
+        self.model = model
+
+    def parameters(self):
+        return self.model.parameters()
+
+    def to(self, device):
+        self.model.to(device)
+        return self
+
+    def eval(self):
+        self.model.eval()
+        return self
+
+
+def load_checkpoint(ckpt_path: str, cfg, vocab_size: int) -> _InferenceModel:
+    """Load a checkpoint for inference without requiring pytorch-lightning.
+
+    Handles Lightning checkpoints (state_dict keys prefixed with ``model.``)
+    and torch.compile'd checkpoints (``_orig_mod.`` prefix) transparently.
     """
-    import pytorch_lightning as pl  # noqa: F401
-    from jam_transformer.lightning_module import JamTransformerLightning
+    from jam_transformer.model import build_model
 
-    lit = JamTransformerLightning(config=cfg, vocab_size=vocab_size, total_steps=1)
+    model = build_model(cfg.model, vocab_size)
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     raw_sd = ckpt.get("state_dict", ckpt)
 
-    has_orig_mod = any("._orig_mod." in k for k in raw_sd)
-    model_is_compiled = hasattr(lit.model, "_orig_mod")
-    if has_orig_mod and not model_is_compiled:
-        raw_sd = {k.replace("._orig_mod.", ".", 1): v for k, v in raw_sd.items()}
+    # Lightning wraps the model as self.model — strip that prefix.
+    if any(k.startswith("model.") for k in raw_sd):
+        raw_sd = {k[len("model."):]: v for k, v in raw_sd.items() if k.startswith("model.")}
+
+    # torch.compile adds _orig_mod. between the module and its children.
+    if any(k.startswith("_orig_mod.") for k in raw_sd):
+        raw_sd = {k[len("_orig_mod."):]: v for k, v in raw_sd.items()}
         logger.info("Detected torch.compile checkpoint — stripped '_orig_mod.' prefix.")
 
-    missing, unexpected = lit.load_state_dict(raw_sd, strict=False)
+    missing, unexpected = model.load_state_dict(raw_sd, strict=False)
     if missing:
         logger.warning(f"Missing keys ({len(missing)}): {missing[:5]}{'...' if len(missing) > 5 else ''}")
     if unexpected:
         logger.warning(f"Unexpected keys ({len(unexpected)}): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
     if not missing and not unexpected:
         logger.info("State dict loaded cleanly.")
-    return lit
+    return _InferenceModel(model)
 
 
 def estimate_key_from_midi(midi_path: Path) -> tuple[int, int] | None:
