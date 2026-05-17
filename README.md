@@ -65,10 +65,10 @@ graph TD
 
 모델이 화음을 쌓지 않고 자꾸 시간만 진행시키려는 단선율 고착화(Sparse generation) 문제를 제어하기 위해 **추론 제어 파라미터(Inference Control Variable)**를 도입했습니다.
 
-$$\text{If last\_token} \in \text{Velocity\_Range:}$$
-$$\text{Next\_Logits}[\text{struct\_ids}] \leftarrow \text{Next\_Logits}[\text{struct\_ids}] - \text{structural\_suppression}$$
+$$\text{If } t_{\text{last}} \in \mathbf{V}_{\text{velocity}}:$$
+$$\mathbf{L}_{\text{next}}[\mathbf{I}_{\text{struct}}] \leftarrow \mathbf{L}_{\text{next}}[\mathbf{I}_{\text{struct}}] - \gamma_{\text{suppress}}$$
 
-* **작동 원리**: 마지막 샘플링된 토큰이 벨로시티(`VEL_v`) 계열일 때, 다음 토큰으로 올 수 있는 시간/구조 관련 토큰(`BAR`, `POS_*`, `TEMPO_*`, `TRACK_*` 등)의 Logits에서 일정한 벌점 값인 `structural_suppression`(기본값: 1.5)을 뺍니다.
+* **작동 원리**: 마지막 샘플링된 토큰 $t_{\text{last}}$가 벨로시티 토큰 집합 $\mathbf{V}_{\text{velocity}}$ (`VEL_*` 계열)에 속할 때, 다음 토큰 예측 Logits인 $\mathbf{L}_{\text{next}}$에서 시간/구조 관련 토큰 인덱스 $\mathbf{I}_{\text{struct}}$ (`BAR`, `POS_*`, `TEMPO_*`, `TRACK_*` 등)의 값을 일정한 벌점 파라미터 $\gamma_{\text{suppress}}$ (설정값 `structural_suppression`, 기본값: 1.5)만큼 차감합니다.
 * **효과**: 모델이 시간 축을 진행시키는 것을 인위적으로 억제하여, 동일한 POS 위치에 여러 음표(화음)를 겹쳐서 적층 생성하도록 유도합니다. 이 수치는 CLI나 YAML 설정을 통해 결정론적으로 조절이 가능합니다.
 
 ---
