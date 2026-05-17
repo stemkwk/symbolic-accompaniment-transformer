@@ -248,7 +248,7 @@ python scripts/compare_inference.py \
 ---
 
 ### D. 📦 대용량 바이너리 자산 패키징 및 공유 (package_assets.py)
-Git 관리에서 제외된 대용량 이진 자산들(`checkpoints/`, `soundfonts/`, `data/raw/`, `data/processed/`)을 단일 `.zip` 아카이브로 신속하게 패키징해 구글 드라이브 등에 업로드하고 동료 연구원들과 공유할 때 활용합니다.
+Git 관리에서 제외된 대용량 이진 자산들(`checkpoints/`, `soundfonts/`, `data/raw/`, `data/processed/`)을 단일 `.zip` 아카이브로 신속하게 패키징해 **GitHub Releases의 Release Asset으로 업로드**하고 동료 연구원들과 공유할 때 활용합니다.
 
 > [!TIP]
 > **대형 데이터셋(Lakh, Slakh 등) 협업 권장 워크플로우**:  
@@ -263,7 +263,7 @@ python scripts/package_assets.py --no-data --no-raw --output jam_light_assets.zi
 ```
 
 #### 📥 공유 받은 동료 연구원의 초고속 3단계 환경 복원법:
-1. 호준 님이 배포해 준 초경량 에셋 번들(`jam_light_assets.zip`)을 다운로드하여 **저장소 루트 디렉터리에 그대로 압축 해제**합니다. (자동으로 `checkpoints/`, `soundfonts/` 정렬 완료)
+1. 저장소의 **GitHub Releases** 탭에서 배포된 초경량 에셋 번들(`jam_light_assets.zip`)을 다운로드하여 **저장소 루트 디렉터리에 그대로 압축 해제**합니다. (자동으로 `checkpoints/`, `soundfonts/` 정렬 완료)
 2. 내장된 자동화 다운로드 스크립트를 한 줄 실행하여 원본 음악 데이터를 받아옵니다 (택1):
    ```bash
    # Option A: POP909 데이터셋 다운로드
