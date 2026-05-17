@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.gitignore
+.venv/
+venv/
+notebooks/
+data/
+checkpoints/
+logs/
+output/
+lightning_logs/
+*.egg-info/
+build/
+dist/

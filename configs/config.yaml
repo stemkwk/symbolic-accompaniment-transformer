@@ -1,0 +1,251 @@
+# ============================================================
+# Single source of truth for all jam_transformer hyperparameters.
+# Anything that drifts between code and config is a bug.
+# ============================================================
+
+tokenizer:
+  # Tokenizer implementation. See `available_tokenizers()` for the registry.
+  name: "remi_v1"
+  # Beat resolution: subdivisions per quarter note. 4 → sixteenth-note grid.
+  resolution: 4
+  # How many positions per bar (assumes 4/4): resolution * 4 = 16.
+  positions_per_bar: 16
+  # Pitch range (inclusive). 21..108 covers the 88-key piano.
+  pitch_min: 21
+  pitch_max: 108
+  # Duration is binned in units of `resolution` (i.e. 16th notes).
+  # 1..32 covers 1/16-note … 2 whole notes.
+  duration_min: 1
+  duration_max: 32
+  # Velocity binned into N buckets across 1..127.
+  velocity_bins: 32
+  # Tempo binned log-scale into N buckets across [tempo_min, tempo_max] BPM.
+  # 16 log-spaced bins give ~9% spacing (human JND ≈ 4-6%), covering all
+  # musical tempo categories without the density imbalance of linear binning.
+  tempo_bins: 16
+  tempo_min: 50
+  tempo_max: 200
+  # Track tags ("melody" = condition, others = target).
+  tracks: ["melody", "bridge", "piano"]
+  # Maximum sequence length (after concatenating condition + target).
+  # 2560: token_add_version Lakh preprocessing 기준값.
+  # 2560-token window ≈ 12-13 bars — chord-progression span 충분히 커버.
+  max_seq_len: 2560
+  # ------------------------------------------------------------------
+  # Relative harmonic encoding settings
+  # ------------------------------------------------------------------
+  # Number of chord quality types (9 = core set, 12 = full set incl. dim7/hdim7/dom9).
+  chord_qualities: 12
+  # Prepend KEY_{root}_{mode} token (24 variants). Enables key-aware chord tokens.
+  use_key_tokens: true
+
+model:
+  name: "decoder_transformer_v1"
+  d_model: 512
+  n_layers: 12
+  n_heads: 8
+  d_ff: 2048
+  dropout: 0.1
+  # If true, use rotary position embeddings; else learned absolute.
+  use_rope: true
+  # Tie input embedding and output projection weights.
+  tie_weights: true
+  # torch.compile (PyTorch 2.x). Big speedup on Ampere+ GPUs, but adds 1-2 min
+  # compile overhead and occasionally fails on exotic shapes. Keep OFF by
+  # default; flip on once you've confirmed the dry-run config compiles cleanly.
+  # torch.compile: 20-30% speedup on Ampere+ (RTX 3090/4090, A100, H100).
+  # Adds 1-2 min compile overhead on first run; fully amortised over 200 epochs.
+  # Keep false on Windows / Colab T4 (Turing GPU, compile is flakey).
+  # RoPE buffer length — must be >= tokenizer.max_seq_len (with headroom for
+  # generation past the prompt length). 4096 covers 2048-prompt + 2048-generate.
+  max_seq_len: 4096
+  compile: true
+  compile_mode: "default"            # reduce-overhead uses CUDA Graphs → OOM on 24GB w/ GC
+  # Recompute activations during backward to halve peak VRAM (~30% slower).
+  # Required on 24GB GPUs at bs=64, seq=2048, n_layers=12. Set false only if
+  # VRAM > 40GB and you want maximum throughput.
+  gradient_checkpointing: true
+
+# Train-time augmentations applied on each chunk fetched from disk. They
+# only fire when the dataset is constructed with `train=True`, so validation
+# always sees the clean tokens.
+augment:
+  # Random pitch transposition range in semitones. 0 disables transposition.
+  # Both condition (melody) and target (accompaniment) get the same offset
+  # so the harmonic relationship is preserved — only the key changes.
+  # ±6 (half-step tritone max) is sufficient because CHROMA/SCALE_DEGREE tokens
+  # are already key-relative; we only need to diversify OCTAVE and KEY tokens.
+  # (Baseline used ±12 with absolute PITCH tokens to cover all 12 keys.)
+  pitch_transpose_semitones: 6
+  # Random velocity bin shift (±N bins out of `tokenizer.velocity_bins`).
+  # Each note gets an independent draw → simulates natural dynamic variation.
+  # 2 bins ≈ ±8 MIDI velocity units on a 32-bin scale.
+  velocity_jitter_bins: 2
+  # Random tempo shift: ±N bins applied to every TEMPO_* token in the chunk.
+  # All TEMPO tokens shift by the *same* delta so the chunk stays consistent.
+  # 2 bins ≈ ±9 BPM on the default 50-200 BPM range with 32 bins.
+  tempo_jitter_bins: 2
+  # Random duration jitter: ±N bins applied to each DUR_* token independently.
+  # Teaches the model to handle slightly stretched / shortened note lengths.
+  # 1 bin ≈ ±1 sixteenth note (at resolution=4).
+  duration_jitter_bins: 1
+  # Classifier-Free Guidance: probability of replacing the melody condition
+  # with PAD tokens so the model also learns P(accompaniment) (no prompt).
+  # At inference, combining the conditional + unconditional logits with a
+  # guidance weight w > 0 lets you crank how strongly the output follows
+  # the input melody. Standard value: 0.1 (MusicGen / Stable Audio).
+  condition_dropout_prob: 0.15
+
+training:
+  # Base batch size before VRAM-tier scaling (env_scaling.tiers multiplies this).
+  # On RTX 4090 (scale×2) → 128; A100 40G (scale×4) → 256; T4 (scale×1) → 64.
+  # Flash Attention (SDPA) keeps activation memory O(T) so large batches are safe.
+  # Override per-run: EXTRA="--set training.batch_size=128" ./server/20_train.sh
+  batch_size: 64
+  learning_rate: 3.0e-4
+  epochs: 200
+  beta1: 0.9
+  beta2: 0.95
+  weight_decay: 0.1
+  grad_clip: 1.0
+  # Lightning's gradient accumulation. Effective batch = batch_size * this.
+  # Use when you want a bigger effective batch than VRAM allows.
+  accumulate_grad_batches: 1
+  # warmup_steps: tuned for bs=64 (tier-scaled to 128/256 on server).
+  # Batch 8x larger → steps/epoch 8x fewer → 500 steps reaches the same
+  # fraction of epoch-1 as 1000 steps did at bs=16.
+  warmup_steps: 500
+  min_lr_factor: 0.1     # cosine decays to lr * this factor
+  # "adamw_fused" — fused CUDA kernel, 5-10% faster than standard AdamW.
+  # PL's AMP-closure block is neutralised in train_components.py so grad_clip
+  # works normally. Falls back to standard AdamW on CPU automatically.
+  optimizer: "adamw_fused"
+  scheduler: "cosine_warmup"
+  # If true, compute CE loss only on accompaniment (target) tokens.
+  mask_condition_loss: true
+  # ------------------------------------------------------------------
+  # Token-type-aware loss weighting (see config.py:TrainingConfig)
+  # ------------------------------------------------------------------
+  # Structural tokens (BAR/POS/TRACK/TEMPO) are easy to predict — down-weight
+  # so the optimiser focuses on PITCH/DUR/VEL where the music lives.
+  loss_struct_weight: 0.3
+  loss_content_weight: 1.5
+  # 폴리포닉 결정(VEL → PITCH 이어지는 같은-위치 코드 추가) 손실 가중치.
+  # POP909 GT는 위치의 49% 가 코드이지만 epoch 10 모델은 11% → 모델이 코드를
+  # 적극적으로 생성하도록 boost. 1.0 = 비활성.
+  polyphony_loss_boost: 2.0
+  # 폴리포니가 풍부한 chunk를 더 자주 샘플링 (WeightedRandomSampler).
+  # weight = (poly_score + 0.01) ** alpha. 0.0 = 균등.
+  polyphony_sample_weight_alpha: 0.5
+  # val batch_size — validation has no backward pass so activations need not
+  # be retained.  0 = auto (2× train batch_size), halving val epoch time
+  # and reducing peak VRAM spikes during evaluation.
+  val_batch_size: 0
+  log_every_n_steps: 25
+  # Three-tier checkpointing strategy:
+  #
+  #   best.ckpt        saved only when val_loss improves (no fixed schedule)
+  #   last.ckpt        saved every checkpoint_every_n_epochs  (resume anchor)
+  #   last_step.ckpt   saved every checkpoint_every_n_train_steps  (crash guard)
+  #
+  checkpoint_dir: "checkpoints"
+  checkpoint_monitor: "val_loss"
+  checkpoint_monitor_mode: "min"
+  # last.ckpt: every 5 epochs is enough — last_step.ckpt covers mid-epoch gaps.
+  checkpoint_every_n_epochs: 5
+  # last_step.ckpt: every 100 steps ≈ ~3s on RTX 4090 (bs=32). Set 0 to disable.
+  checkpoint_every_n_train_steps: 100
+  # Early stopping — refuse to keep burning GPU when val_loss plateaus.
+  # Triggered iff training runs for at least `early_stopping_min_epochs`.
+  early_stopping_enabled: true
+  # patience: how many epochs without improvement before stopping.
+  # Must outlast the warmup period (~8 ep on T4) + allow for cosine-decay
+  # slow-improvement phases. 15 gives the model a full LR cycle to breathe.
+  early_stopping_patience: 15
+  # min_delta: improvement < this is treated as "no improvement" and counts
+  # against patience. 0.001 is tight enough to skip noise but loose enough
+  # not to penalise the gradual tail of cosine decay.
+  early_stopping_min_delta: 0.001
+  # min_epochs: never stop before this epoch regardless of patience.
+  # Set to at least the warmup duration so early stopping doesn't trigger
+  # while the LR is still ramping up.
+  early_stopping_min_epochs: 15
+  # Logging persistence (independent of W&B availability).
+  log_to_file: true
+  log_dir: "logs"
+  # CSV logger writes metrics to disk so they survive even if W&B is off.
+  csv_logger_enabled: true
+  # W&B
+  wandb_project: "jam-transformer"
+  wandb_default_run_name: "pop909-baseline"
+  # Dry-run: train this many steps, report throughput, then exit. 0 = disabled.
+  # Use this BEFORE committing to a long run on a rented GPU so you can budget.
+  dry_run_steps: 0
+
+inference:
+  # Diversity-friendly defaults (top_p only, no top_k cutoff). Higher
+  # temperature + wider top_p prevents collapse to a single dominant pitch.
+  temperature: 1.1
+  top_k: 0                # 0 = disabled
+  top_p: 0.92
+  max_new_tokens: 2048    # POP909 song = ~6k tokens; 2048 covers most chunks
+  # Polyphony hack: after a complete (CHROMA/OCTAVE/DUR/VEL) quad, subtract this
+  # value from BAR/POS logits so the model is biased toward stacking another
+  # note at the same position (= chord) instead of advancing. 0.0 disables.
+  structural_suppression: 1.5
+  # Render generated MIDI to WAV at end of inference (requires pyfluidsynth).
+  render_audio: false
+  soundfont: ""           # path to .sf2; empty = auto-detect system soundfonts
+  sample_rate: 22050
+
+humanize:
+  # Add subtle randomness to velocity and timing to reduce mechanical feel.
+  # Applied automatically at the end of inference — set enabled: false to skip.
+  enabled: true
+  velocity_std: 6         # gaussian std for velocity jitter (±MIDI units, 1–127)
+  timing_std_ms: 8.0      # gaussian std for note-on timing jitter (milliseconds)
+  duration_std_ms: 5.0    # gaussian std for note duration jitter (milliseconds)
+
+audio_input:
+  # Spectral noise reduction via noisereduce (applied before basic-pitch).
+  # Recommended for mic recordings in noisy environments.
+  denoise: false
+
+  # basic-pitch transcription quality parameters.
+  # Raise thresholds to get fewer, more confident notes (less noise).
+  # Lower them if notes are being missed.
+  onset_threshold: 0.5    # 0–1: higher = fewer false note onsets
+  frame_threshold: 0.3    # 0–1: higher = shorter / fewer sustained notes
+  min_note_length_ms: 58.0
+  min_frequency: 32.7     # Hz — C1 (lower limit); raise to ~130 (C3) for vocals
+  max_frequency: 2093.0   # Hz — C7 (upper limit)
+
+midi_output:
+  # GM program number (0–127) per logical track.
+  # See General MIDI spec for the full list.
+  # Common: 0=acoustic grand, 25=steel guitar, 40=violin, 48=strings,
+  #         56=trumpet, 65=alto sax, 73=flute, 19=church organ
+  programs:
+    melody: 40    # violin
+    bridge: 25    # acoustic guitar (steel)
+    piano:  0     # acoustic grand
+
+env_scaling:
+  # Per-VRAM-tier batch-size multiplier (linear LR scaling applied too).
+  fallback_batch_scale: 1
+  default_precision: "bf16-mixed"
+  cpu_precision: "32"
+  tiers:
+    - vram_gte_gb: 40.0
+      batch_scale: 4
+      label: "A100 40GB+"
+    - vram_gte_gb: 22.0
+      batch_scale: 2
+      label: "RTX 3090 / 4090 / A5000"
+    - vram_gte_gb: 14.0
+      batch_scale: 1
+      label: "T4 / RTX 3080 Ti"
+  num_workers_colab: 2
+  num_workers_windows: 0
+  num_workers_server_max: 8
+  prefetch_factor: 2

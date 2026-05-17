@@ -1,0 +1,37 @@
+# Example sweep: tiny / small / medium model sizes against the same data.
+# Run with:
+#   python scripts/sweep.py --sweep configs/sweep_example.yaml --data_dir data/processed
+#
+# `common_set` entries apply to every run. Per-run `set` entries override the
+# common set when they collide. Each run gets its own checkpoint + log dir
+# under `sweep_results/<timestamp>/<run_name>/` so nothing clobbers anything.
+
+base_config: configs/config.yaml
+
+common_set:
+  - "training.epochs=10"
+  - "training.early_stopping_enabled=true"
+  - "training.early_stopping_patience=3"
+  - "training.csv_logger_enabled=true"
+
+runs:
+  - name: tiny
+    set:
+      - "model.d_model=128"
+      - "model.n_layers=2"
+      - "model.n_heads=2"
+      - "model.d_ff=512"
+
+  - name: small
+    set:
+      - "model.d_model=256"
+      - "model.n_layers=4"
+      - "model.n_heads=4"
+      - "model.d_ff=1024"
+
+  - name: medium
+    set:
+      - "model.d_model=512"
+      - "model.n_layers=8"
+      - "model.n_heads=8"
+      - "model.d_ff=2048"

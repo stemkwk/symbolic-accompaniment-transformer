@@ -1,0 +1,123 @@
+# ==========================================
+# 1. 보안 및 환경 설정 (Security & Environment)
+# ==========================================
+.env
+.env.*
+!.env.example
+
+# ==========================================
+# 2. 학습 산출물 및 로그 (Training Outputs & Logs)
+# ==========================================
+# 폴더 구조는 유지하되 내부 파일은 무시
+checkpoints/*
+!checkpoints/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+output/*
+!output/.gitkeep
+
+inspection/*
+!inspection/.gitkeep
+
+sweep_results/*
+!sweep_results/.gitkeep
+
+# 학습 도중 또는 기타 툴이 생성하는 로그/임시 폴더 전체 무시
+lightning_logs/
+pulled_checkpoints/
+pulled_logs/
+wandb/
+
+# ==========================================
+# 3. 데이터셋 및 전처리 데이터 (Datasets & Preprocessed Data)
+# ==========================================
+# data/inspect는 Git에 포함시키고, raw와 processed는 폴더 구조만 유지
+data/*
+!data/inspect/
+!data/raw/
+!data/processed/
+
+data/raw/*
+!data/raw/.gitkeep
+
+data/processed*/*
+!data/processed*/.gitkeep
+
+# 혹시 모를 대용량 바이너리 데이터 무시
+*.pt
+*.pth
+*.ckpt
+*.mid
+*.mp3
+*.wav
+# 단, data/inspect 아래의 mid 파일은 제외하고 추적
+!data/inspect/*.mid
+
+# ==========================================
+# 4. 사운드폰트 (Soundfonts)
+# ==========================================
+# 대용량 사운드폰트 바이너리는 제외하고 폴더 구조만 유지
+soundfonts/*
+!soundfonts/.gitkeep
+
+# ==========================================
+# 5. 빌드 및 배포 번들 (Build & Deployment Bundles)
+# ==========================================
+jam_tx_bundle.*
+
+# ==========================================
+# 6. Python 캐시 및 빌드 파일 (Python Caches & Builds)
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==========================================
+# 7. 테스트 및 캐시 (Testing & Lint Caches)
+# ==========================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ==========================================
+# 8. 가상환경 (Virtual Environments)
+# ==========================================
+.venv/
+venv/
+ENV/
+env/
+active_env/
+
+# ==========================================
+# 9. 에디터 및 OS 임시 파일 (Editors & OS Files)
+# ==========================================
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+.claude/
+.cline/
+.anthropic/

@@ -1,0 +1,48 @@
+# W&B sweep definition. Use this when you want Bayesian search or distributed
+# agents across multiple GPUs. The local equivalent (`sweep.py`) is enough for
+# a few hand-picked configs; this one is right when you don't know which knob
+# matters yet.
+#
+# Run:
+#   wandb sweep configs/wandb_sweep.yaml          # prints a SWEEP_ID
+#   wandb agent <entity>/<project>/<SWEEP_ID>     # one agent per GPU
+#
+# The agent runs `command` with the sampled values appended; each parameter
+# becomes a `--set section.key=value` arg via the template below.
+
+program: scripts/train.py
+method: bayes
+metric:
+  name: val_loss
+  goal: minimize
+
+parameters:
+  model.d_model:
+    values: [256, 384, 512, 768]
+  model.n_layers:
+    values: [4, 6, 8, 12]
+  model.n_heads:
+    values: [4, 8]
+  model.dropout:
+    distribution: uniform
+    min: 0.05
+    max: 0.3
+  training.learning_rate:
+    distribution: log_uniform_values
+    min: 1.0e-5
+    max: 5.0e-4
+  training.weight_decay:
+    values: [0.0, 0.01, 0.1]
+
+# Each agent invokes `train.py` with the sweep-sampled values inlined as
+# `--set` overrides. ${args} expands to the wandb-injected key=value pairs;
+# we wrap them so they reach our overrides parser instead of argparse.
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--config"
+  - "configs/config.yaml"
+  - "--data_dir"
+  - "data/processed"
+  - ${args_no_hyphens}

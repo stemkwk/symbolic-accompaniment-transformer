@@ -1,0 +1,28 @@
+# Quick way to bring up training on a rented GPU box that already has the
+# nvidia container runtime installed (vast.ai, runpod, lambda labs all do).
+#
+#   docker compose run --rm train python scripts/prepare_data.py --pop909_dir /data/POP909
+#   docker compose run --rm train python scripts/train.py --dry_run_steps 50
+#   docker compose run --rm train python scripts/train.py --epochs 80
+services:
+  train:
+    build: .
+    image: jam-transformer:latest
+    runtime: nvidia
+    environment:
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - WANDB_DISABLED=${WANDB_DISABLED:-}
+      - WANDB_NAME=${WANDB_NAME:-}
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+      - ./output:/app/output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

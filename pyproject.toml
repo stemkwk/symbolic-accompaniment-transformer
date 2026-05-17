@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jam_transformer"
+version = "0.1.0"
+description = "Symbolic vocal-melody → accompaniment Transformer."
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1",
+    "pytorch-lightning>=2.2",
+    "miditoolkit>=1.0.0",
+    "pretty_midi>=0.2.10",
+    "numpy",
+    "pyyaml",
+    "tqdm",
+    "loguru",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-timeout",   # @pytest.mark.timeout used in test_dynamics.py
+    "wandb",
+    "zstandard",        # package_for_server.py --compress zst (default)
+]
+render = [
+    "pyfluidsynth",       # optional MIDI → WAV at inference time
+    "scipy",
+]
+audio = [
+    "basic-pitch",        # audio (WAV/MP3) → MIDI transcription at inference time
+    "sounddevice",        # microphone recording (--mic_input)
+    "scipy",              # WAV file write for mic recording
+    "noisereduce",        # spectral noise reduction (--denoise)
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
