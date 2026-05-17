@@ -36,6 +36,9 @@ audio = [
     "scipy",              # WAV file write for mic recording
     "noisereduce",        # spectral noise reduction (--denoise)
 ]
+demo = [
+    "gradio>=4.0",        # web demo (app.py)
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

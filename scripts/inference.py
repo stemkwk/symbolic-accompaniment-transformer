@@ -23,7 +23,6 @@ import torch
 
 from jam_transformer.audio import audio_to_midi, record_from_mic, render_midi_to_wav
 from jam_transformer.config import load_config
-from jam_transformer.dataset import JamTokenDataset  # noqa: F401  (kept for shared imports)
 from jam_transformer.logger import logger
 from jam_transformer.overrides import apply_overrides
 from jam_transformer.pipeline import generate_accompaniment, load_checkpoint
@@ -164,71 +163,30 @@ def main() -> None:
         logger.info(f"Track name override: {track_name_override}")
 
     logger.info(f"Loading checkpoint: {args.checkpoint}")
-    lit = _load_checkpoint(args.checkpoint, cfg, tokenizer.vocab_size)
+    lit = load_checkpoint(args.checkpoint, cfg, tokenizer.vocab_size)
     lit.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lit.to(device)
 
-    prompt_ids, tempo = _build_prompt(
-        Path(args.melody_midi), tokenizer, cond_tracks,
+    midi, tempo = generate_accompaniment(
+        melody_midi=Path(args.melody_midi),
+        cfg=cfg,
+        lit=lit,
+        tokenizer=tokenizer,
+        cond_tracks=cond_tracks,
         tempo_override=args.tempo,
         track_name_override=track_name_override,
-    )
-    src = "override" if args.tempo else "from MIDI"
-    logger.info(f"Prompt length: {prompt_ids.numel()} tokens  |  tempo={tempo:.1f} BPM ({src})")
-    prompt_ids = prompt_ids.to(device)
-
-    # Build unconditional prompt for CFG (melody tokens replaced by PAD).
-    uncond_ids = None
-    if args.cfg_w > 0.0:
-        uncond_ids = torch.tensor(
-            tokenizer.make_uncond_prompt(prompt_ids), dtype=torch.long, device=device,
-        )
-        logger.info(f"CFG enabled  |  cfg_w={args.cfg_w:.2f}")
-
-    struct_supp = (args.struct_suppression
-                   if args.struct_suppression is not None
-                   else getattr(icfg, "structural_suppression", 0.0))
-    if struct_supp > 0.0:
-        logger.info(f"Structural suppression: {struct_supp:.2f}")
-
-    generated = lit.model.generate(
-        prompt_ids,
-        max_new_tokens=max_new,
-        eos_id=tokenizer.eos_id,
-        temperature=temperature,
-        top_k=top_k,
-        top_p=top_p,
-        uncond_prompt_ids=uncond_ids,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        top_p=args.top_p,
+        max_new_tokens=args.max_new_tokens,
         cfg_w=args.cfg_w,
-        structural_suppression=struct_supp,
-        vel_id_range=(tokenizer.vel_min_id, tokenizer.vel_max_id),
-        struct_ids=tokenizer.structural_ids(),
-    )[0].cpu().tolist()
-
-    # Decode the FULL generated sequence so the KEY_* token at the head of the
-    # prompt is present — decode() extracts key_root from the first KEY token and
-    # uses it for every CHROMA→pitch reconstruction.  Slicing to target_ids
-    # (tokens after <SEP>) would lose the KEY token and silently default to
-    # key_root=0 (C major), producing wrong pitches for all non-C songs.
-    all_events = tokenizer.decode(generated)
-    target_track_set = set(cfg.tokenizer.tracks) - set(cond_tracks)
-    target_events = [e for e in all_events if e.track in target_track_set]
-    melody_events, _ = midi_to_events(Path(args.melody_midi), tokenizer.cfg, track_name_override)
+        structural_suppression=args.struct_suppression,
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    midi = events_to_midi(
-        [*melody_events, *target_events], cfg.tokenizer, tempo_bpm=tempo,
-        programs=cfg.midi_output.programs,
-    )
-    hcfg = cfg.humanize
-    if hcfg.enabled:
-        midi = humanize_midi(midi,
-                             velocity_std=hcfg.velocity_std,
-                             timing_std_ms=hcfg.timing_std_ms,
-                             duration_std_ms=hcfg.duration_std_ms)
     midi.dump(str(out_path))
-    logger.info(f"Wrote {out_path}  ({len(target_events)} generated notes)")
+    logger.info(f"Wrote {out_path}")
 
     if icfg.render_audio:
         render_midi_to_wav(out_path, out_path.with_suffix(".wav"),
