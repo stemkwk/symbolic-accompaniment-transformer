@@ -130,6 +130,10 @@ def audio_to_midi(
 
 
 _SOUNDFONT_SEARCH_PATHS = [
+    # Project-local (works on all platforms — drop any .sf2 here)
+    "soundfonts/FluidR3_GM.sf2",
+    "soundfonts/GeneralUser.sf2",
+    "soundfonts/default.sf2",
     # Linux (apt install fluid-soundfont-gm / musescore-soundfont-gm)
     "/usr/share/sounds/sf2/FluidR3_GM.sf2",
     "/usr/share/sounds/sf2/FluidR3_GS.sf2",
@@ -137,6 +141,8 @@ _SOUNDFONT_SEARCH_PATHS = [
     # macOS (Homebrew fluid-synth)
     "/usr/local/share/sounds/sf2/FluidR3_GM.sf2",
     "/opt/homebrew/share/sounds/sf2/FluidR3_GM.sf2",
+    # Windows — choco install fluidsynth
+    "C:/tools/fluidsynth/share/soundfonts/default.sf2",
     # Common user locations
     "~/soundfonts/FluidR3_GM.sf2",
     "~/soundfonts/GeneralUser.sf2",
@@ -218,40 +224,81 @@ def render_midi_to_wav(midi_path: Path, wav_path: Path,
                        soundfont: str, sample_rate: int) -> None:
     """Render a MIDI file to WAV using FluidSynth.
 
-    Requires: pip install 'jam_transformer[render]'  (pyfluidsynth, scipy)
+    Strategy (in order):
+      1. pyfluidsynth midi_to_audio()     — newest API
+      2. pyfluidsynth file audio driver   — reliable on all platforms
+      3. fluidsynth CLI via subprocess    — last resort
+    Requires: pip install 'jam_transformer[render]'  (pyfluidsynth)
     *soundfont* is tried first; if missing, common system paths are searched.
     """
+    sf_path = _find_soundfont(soundfont)
+    if sf_path is None:
+        return
+
     try:
         import fluidsynth
-        from scipy.io import wavfile
-        import numpy as np
     except ImportError:
-        logger.warning("pyfluidsynth + scipy not installed; skipping WAV render.")
+        logger.warning("pyfluidsynth not installed; skipping WAV render.")
         return
 
-    sf = _find_soundfont(soundfont)
-    if sf is None:
+    # ── 방법 1: midi_to_audio() (pyfluidsynth 최신) ─────────────────────────
+    try:
+        fs = fluidsynth.Synth(samplerate=float(sample_rate))
+        fs.sfload(sf_path)
+        if hasattr(fs, "midi_to_audio"):
+            fs.midi_to_audio(str(midi_path), str(wav_path))
+            fs.delete()
+            logger.info(f"Rendered WAV → {wav_path}")
+            return
+        fs.delete()
+    except Exception as e:
+        logger.debug(f"midi_to_audio 실패: {e}")
+
+    # ── 방법 2: file 오디오 드라이버 (pyfluidsynth Player API) ──────────────
+    try:
+        fs = fluidsynth.Synth(samplerate=float(sample_rate))
+        fs.setting("audio.driver", "file")
+        fs.setting("audio.file.name", str(wav_path))
+        fs.setting("audio.file.type", "wav")
+        fs.setting("player.timing-source", "sample")
+        fs.setting("synth.lock-memory", 0)
+        fs.sfload(sf_path)
+        fs.start(driver="file")
+
+        player = fluidsynth.Player(fs)
+        player.add(str(midi_path))
+        player.play()
+        player.join()
+        player.stop()
+        fs.delete()
+
+        if wav_path.exists():
+            logger.info(f"Rendered WAV → {wav_path}")
+            return
+    except Exception as e:
+        logger.debug(f"file driver 실패: {e}")
+
+    # ── 방법 3: fluidsynth CLI subprocess ────────────────────────────────────
+    import shutil
+    import subprocess
+
+    fluidsynth_bin = shutil.which("fluidsynth")
+    if fluidsynth_bin is None:
+        logger.warning(
+            "WAV 렌더링 실패 — pyfluidsynth API와 CLI 모두 사용 불가.\n"
+            "  Windows: winget install FluidSynth.FluidSynth 후 재시도"
+        )
         return
 
-    fs = fluidsynth.Synth(samplerate=float(sample_rate))
-    sfid = fs.sfload(sf)
-    fs.program_select(0, sfid, 0, 0)
+    cmd = [
+        fluidsynth_bin, "-ni",
+        "-F", str(wav_path),
+        "-r", str(sample_rate),
+        sf_path, str(midi_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not wav_path.exists():
+        logger.warning(f"fluidsynth CLI 실패:\n{result.stderr}")
+        return
 
-    if hasattr(fs, "midi_to_audio"):
-        fs.midi_to_audio(str(midi_path), str(wav_path))
-    else:
-        import miditoolkit
-        midi = miditoolkit.MidiFile(str(midi_path))
-        samples = []
-        for inst in midi.instruments:
-            for n in inst.notes:
-                fs.noteon(0, n.pitch, n.velocity)
-                samples.append(
-                    fs.get_samples(int(sample_rate * (n.end - n.start) / midi.ticks_per_beat))
-                )
-                fs.noteoff(0, n.pitch)
-        audio = np.concatenate(samples) if samples else np.zeros(sample_rate, dtype=np.int16)
-        wavfile.write(str(wav_path), sample_rate, audio.astype("int16"))
-
-    fs.delete()
     logger.info(f"Rendered WAV → {wav_path}")

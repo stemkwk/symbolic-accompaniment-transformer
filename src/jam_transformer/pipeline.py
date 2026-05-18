@@ -173,7 +173,16 @@ def generate_accompaniment(
         track_name_override=track_name_override,
     )
     prompt_ids = prompt_ids.to(device)
-    logger.info(f"Prompt: {prompt_ids.numel()} tokens  |  tempo={tempo:.1f} BPM")
+
+    # 프롬프트 + 생성 토큰이 모델 max_seq_len을 초과하지 않도록 클램핑
+    model_max = getattr(cfg.model, "max_seq_len", 4096)
+    max_new = min(max_new, model_max - prompt_ids.numel())
+    if max_new <= 0:
+        raise ValueError(
+            f"프롬프트({prompt_ids.numel()} tokens)가 model.max_seq_len({model_max})에 도달했습니다. "
+            "더 짧은 멜로디를 입력하거나 model.max_seq_len을 늘려주세요."
+        )
+    logger.info(f"Prompt: {prompt_ids.numel()} tokens  |  tempo={tempo:.1f} BPM  |  max_new={max_new}")
 
     uncond_ids = None
     if cfg_w > 0.0:

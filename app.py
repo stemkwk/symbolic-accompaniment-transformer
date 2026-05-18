@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import math
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -47,9 +48,36 @@ _STATE: dict = {}
 
 
 def _get_state():
-    if not _STATE:
-        raise RuntimeError("Model not loaded. Pass --checkpoint when launching app.py.")
+    if not _STATE.get("lit"):
+        raise RuntimeError("체크포인트가 로드되지 않았습니다. 상단에서 체크포인트를 선택하고 '로드'를 눌러주세요.")
     return _STATE["cfg"], _STATE["lit"], _STATE["tokenizer"]
+
+
+def _list_checkpoints() -> list[str]:
+    ckpt_dir = Path(_STATE.get("ckpt_dir", "checkpoints"))
+    if not ckpt_dir.exists():
+        return []
+    return sorted(p.name for p in ckpt_dir.glob("*.ckpt"))
+
+
+def _load_model(ckpt_name: str) -> str:
+    if not ckpt_name:
+        return "⚠️ 체크포인트를 선택해주세요."
+    try:
+        cfg = _STATE["cfg"]
+        tokenizer = _STATE["tokenizer"]
+        ckpt_path = Path(_STATE["ckpt_dir"]) / ckpt_name
+        logger.info(f"Loading checkpoint: {ckpt_path}")
+        lit = load_checkpoint(str(ckpt_path), cfg, tokenizer.vocab_size)
+        lit.eval()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        lit.to(device)
+        _STATE["lit"] = lit
+        _STATE["current_ckpt"] = ckpt_name
+        return f"✅ {ckpt_name} 로드 완료  ({device})"
+    except Exception as e:
+        logger.exception("Checkpoint load failed")
+        return f"❌ 로드 실패: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -82,9 +110,11 @@ def _detect_bpm(audio_path: Path, fallback: float = 120.0) -> float:
     return fallback
 
 
-def _render(midi_path: Path, cfg) -> Path | None:
+def _render(midi_path: Path, cfg, out_wav: Path | None = None) -> Path | None:
     icfg = cfg.inference
-    out_wav = Path(tempfile.mktemp(suffix=".wav"))
+    if out_wav is None:
+        out_wav = Path(tempfile.mktemp(suffix=".wav"))
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
     render_midi_to_wav(midi_path, out_wav, icfg.soundfont, icfg.sample_rate)
     if not out_wav.exists():
         return None
@@ -121,8 +151,13 @@ def _loop_and_mix(melody_wav: Path, accomp_wav: Path, out_path: Path) -> None:
     wavfile.write(str(out_path), sr_a, mixed)
 
 
+def _default_name() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
 def _generate(melody_midi: Path, cfg, lit, tokenizer, cond_tracks,
-              temperature, top_p, cfg_w) -> tuple[Path, float]:
+              temperature, top_p, cfg_w,
+              out_midi: Path | None = None) -> tuple[Path, float]:
     midi, tempo = generate_accompaniment(
         melody_midi=melody_midi,
         cfg=cfg, lit=lit, tokenizer=tokenizer,
@@ -131,7 +166,9 @@ def _generate(melody_midi: Path, cfg, lit, tokenizer, cond_tracks,
         top_p=top_p,
         cfg_w=cfg_w,
     )
-    out_midi = Path(tempfile.mktemp(suffix=".mid"))
+    if out_midi is None:
+        out_midi = Path(tempfile.mktemp(suffix=".mid"))
+    out_midi.parent.mkdir(parents=True, exist_ok=True)
     midi.dump(str(out_midi))
     return out_midi, tempo
 
@@ -148,32 +185,60 @@ def _run_simple(
     temperature: float,
     top_p: float,
     cfg_w: float,
+    output_name: str,
 ) -> tuple:
     cfg, lit, tokenizer = _get_state()
     acfg = cfg.audio_input
     cond_tracks = [t.strip() for t in cond_tracks_str.split(",") if t.strip()]
 
+    # 출력 경로 결정
+    name = output_name.strip() or _default_name()
+    out_dir = Path("output") / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         raw_audio = audio_file or mic_audio
         if raw_audio:
+            input_preview = raw_audio
+            input_wav_for_mix = Path(raw_audio)
             melody_midi = _transcribe_audio(Path(raw_audio), acfg, denoise)
         elif midi_file:
             melody_midi = Path(midi_file if isinstance(midi_file, str) else midi_file.name)
+            input_preview_wav = _render(melody_midi, cfg, out_dir / "input.wav")
+            input_preview = str(input_preview_wav) if input_preview_wav else None
+            input_wav_for_mix = input_preview_wav
         else:
-            return None, None, "⚠️ 입력을 제공해주세요."
+            return None, None, None, None, "⚠️ 입력을 제공해주세요."
 
         out_midi, _ = _generate(melody_midi, cfg, lit, tokenizer,
-                                 cond_tracks, temperature, top_p, cfg_w)
-        out_wav = _render(out_midi, cfg)
+                                 cond_tracks, temperature, top_p, cfg_w,
+                                 out_midi=out_dir / "accompaniment.mid")
+        out_wav = _render(out_midi, cfg, out_dir / "accompaniment.wav")
 
-        status = "✅ 생성 완료"
+        # 입력 + 출력 합성
+        mixed_wav = None
+        if out_wav and input_wav_for_mix and input_wav_for_mix.exists():
+            try:
+                mixed_path = out_dir / "mixed.wav"
+                _loop_and_mix(input_wav_for_mix, out_wav, mixed_path)
+                mixed_wav = mixed_path
+            except Exception:
+                logger.warning("믹싱 실패 — 합성 WAV를 건너뜁니다.")
+
+        status = f"✅ 생성 완료  |  저장 위치: output/{name}/"
         if out_wav is None:
             status += "  (사운드폰트 없음 — MIDI만 제공)"
-        return str(out_wav) if out_wav else None, str(out_midi), status
+        return (
+            input_preview,
+            str(out_wav) if out_wav else None,
+            str(mixed_wav) if mixed_wav else None,
+            str(out_midi),
+            status,
+        )
 
     except Exception as e:
         logger.exception("Simple generation failed")
-        return None, None, f"❌ 오류: {e}"
+        return None, None, None, None, f"❌ 오류: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +352,36 @@ def build_ui() -> gr.Blocks:
             "**루프 스테이션**: 짧은 악절을 녹음하면 처리하는 동안 루프를 계속 연주하세요 — 완료 후 반주 레이어를 추가합니다."
         )
 
+        # ── 체크포인트 선택기 ────────────────────────────────────────────────
+        available = _list_checkpoints()
+        current = _STATE.get("current_ckpt", "")
+        with gr.Row():
+            ckpt_dropdown = gr.Dropdown(
+                choices=available,
+                value=current if current in available else (available[0] if available else None),
+                label="체크포인트 선택",
+                scale=4,
+            )
+            ckpt_refresh_btn = gr.Button("🔄 새로고침", scale=1)
+            ckpt_load_btn = gr.Button("📂 로드", variant="primary", scale=1)
+        ckpt_status = gr.Textbox(
+            label="로드 상태",
+            value=f"✅ {current} 로드 완료" if current else "⚠️ 체크포인트를 선택하고 로드해주세요.",
+            interactive=False,
+        )
+
+        ckpt_refresh_btn.click(
+            fn=lambda: gr.update(choices=_list_checkpoints()),
+            outputs=ckpt_dropdown,
+        )
+        ckpt_load_btn.click(
+            fn=_load_model,
+            inputs=ckpt_dropdown,
+            outputs=ckpt_status,
+        )
+
+        gr.Markdown("---")
+
         with gr.Tabs():
             # ================================================================
             # 탭 1: 단순 생성
@@ -321,6 +416,11 @@ def build_ui() -> gr.Blocks:
                         simple_cond = gr.Textbox(
                             label="조건 트랙", value="melody",
                         )
+                        simple_outname = gr.Textbox(
+                            label="저장 폴더명 (output/ 하위, 비우면 타임스탬프)",
+                            placeholder="예: test_001  →  output/test_001/",
+                            value="",
+                        )
 
                         gr.Markdown("### 생성 파라미터")
                         simple_temp, simple_topp, simple_cfgw = _param_sliders()
@@ -329,15 +429,23 @@ def build_ui() -> gr.Blocks:
                     with gr.Column(scale=1):
                         gr.Markdown("### 출력")
                         simple_status = gr.Textbox(label="상태", interactive=False)
-                        simple_wav_out = gr.Audio(label="반주 WAV", type="filepath")
+                        simple_input_preview = gr.Audio(
+                            label="입력 멜로디 (참고용)", type="filepath",
+                        )
+                        simple_wav_out = gr.Audio(label="생성된 반주 WAV", type="filepath")
+                        simple_mixed_out = gr.Audio(
+                            label="멜로디 + 반주 합성", type="filepath",
+                        )
                         simple_midi_out = gr.File(label="MIDI 다운로드")
 
                 simple_btn.click(
                     fn=_run_simple,
                     inputs=[simple_midi, simple_audio, simple_mic,
                             simple_denoise, simple_cond,
-                            simple_temp, simple_topp, simple_cfgw],
-                    outputs=[simple_wav_out, simple_midi_out, simple_status],
+                            simple_temp, simple_topp, simple_cfgw,
+                            simple_outname],
+                    outputs=[simple_input_preview, simple_wav_out,
+                             simple_mixed_out, simple_midi_out, simple_status],
                 )
 
             # ================================================================
@@ -424,7 +532,10 @@ def build_ui() -> gr.Blocks:
 # ---------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(description="JAM Transformer Gradio web demo.")
-    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="초기 로드할 체크포인트 경로. 생략 시 UI에서 선택.")
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints",
+                        help="체크포인트 디렉토리 (드롭다운 목록 소스).")
     parser.add_argument("--config", type=str, default="configs/config.yaml")
     parser.add_argument("--share", action="store_true",
                         help="Create a public Gradio share link.")
@@ -435,16 +546,29 @@ def main() -> None:
     cfg = load_config(args.config)
     tokenizer = build_tokenizer(cfg.tokenizer)
 
-    logger.info(f"Loading checkpoint: {args.checkpoint}")
-    lit = load_checkpoint(args.checkpoint, cfg, tokenizer.vocab_size)
-    lit.eval()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    lit.to(device)
-    logger.info(f"Model ready on {device}.")
-
     _STATE["cfg"] = cfg
-    _STATE["lit"] = lit
     _STATE["tokenizer"] = tokenizer
+    _STATE["ckpt_dir"] = args.checkpoint_dir
+    _STATE["lit"] = None
+    _STATE["current_ckpt"] = ""
+
+    # --checkpoint 가 주어졌으면 바로 로드
+    if args.checkpoint:
+        ckpt_path = Path(args.checkpoint)
+        ckpt_name = ckpt_path.name
+        # 절대/상대 경로 모두 지원: 디렉토리 외부 경로도 허용
+        if not ckpt_path.parent.samefile(Path(args.checkpoint_dir)) \
+                if ckpt_path.parent.exists() else True:
+            # checkpoint_dir 바깥 경로면 그 부모를 dir로 설정
+            _STATE["ckpt_dir"] = str(ckpt_path.parent)
+        logger.info(f"Loading checkpoint: {ckpt_path}")
+        lit = load_checkpoint(str(ckpt_path), cfg, tokenizer.vocab_size)
+        lit.eval()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        lit.to(device)
+        _STATE["lit"] = lit
+        _STATE["current_ckpt"] = ckpt_name
+        logger.info(f"Model ready on {device}.")
 
     demo = build_ui()
     demo.launch(server_name=args.host, server_port=args.port, share=args.share)
