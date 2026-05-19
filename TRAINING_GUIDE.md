@@ -50,11 +50,20 @@ cd project_transformer
 
 ## 2. GitHub Releases에서 자산 다운로드
 
-학습에 필요한 **체크포인트(모델 가중치)** 와 **사운드폰트(음색 파일)** 는 Git에 포함되지 않습니다.
+Git에 포함되지 않는 대용량 파일들은 Releases에서 별도로 받습니다.  
+**목적에 따라 필요한 파일만** 받으면 됩니다.
+
+| 파일 | 내용 | 필요한 경우 |
+|---|---|---|
+| `jam_checkpoints.zip` | 모델 가중치 | 항상 필요 |
+| `jam_soundfonts.zip` | 피아노 음색 파일(.sf2) | 반주 생성(추론) 시 필요 |
+| `jam_data_processed.zip` | 전처리된 학습 데이터 | 학습 재개 시 필요 |
 
 1. GitHub 저장소 상단 **Releases** 탭 클릭
-2. 최신 릴리즈에서 `jam_light_assets.zip` 다운로드
-3. zip 파일을 **저장소 루트 폴더** (`project_transformer/`) 에서 압축 해제
+2. 최신 릴리즈에서 위 파일 중 필요한 것을 다운로드
+3. 각 zip 파일을 **저장소 루트 폴더** (`project_transformer/`) 에서 압축 해제
+
+> 세 파일 모두 같은 위치에서 풀면 됩니다. 폴더가 자동으로 제자리에 생깁니다.
 
 압축 해제 후 폴더 구조:
 
@@ -65,6 +74,12 @@ project_transformer/
 │   └── last.ckpt
 ├── soundfonts/
 │   └── *.sf2
+├── data/
+│   └── processed/
+│       ├── pop909_*.pt
+│       ├── lakh_*.pt
+│       ├── slakh_*.pt
+│       └── _chunk_index.json
 ├── Dockerfile
 ├── docker-compose.yaml
 └── ...
@@ -118,10 +133,13 @@ GPU: NVIDIA GeForce RTX 4060 Ti
 
 ## 7. 데이터 준비
 
+> **Releases에서 `jam_data_processed.zip`을 받았다면 이 단계를 건너뛰어도 됩니다.**  
+> `data/processed/` 폴더가 이미 있고 `.pt` 파일들이 들어있으면 바로 8단계로 이동하세요.
+
 전체 학습 데이터는 **POP909 + Lakh + Slakh** 세 데이터셋을 사용합니다.  
 모두 같은 `data/processed/` 에 쌓으면 됩니다. 각 실행이 끝날 때마다 인덱스에 누적됩니다.
 
-### A. 전체 데이터셋 (실제 학습용)
+### A. 전체 데이터셋 (직접 다운로드 및 전처리)
 
 아래 명령을 **순서대로** 실행합니다. 중간에 실패해도 완료된 부분은 재실행하지 않아도 됩니다.
 

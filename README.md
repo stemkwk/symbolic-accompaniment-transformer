@@ -268,39 +268,32 @@ python scripts/compare_inference.py \
 ---
 
 ### E. 📦 대용량 바이너리 자산 패키징 및 공유 (package_assets.py)
-Git 관리에서 제외된 대용량 이진 자산들(`checkpoints/`, `soundfonts/`, `data/raw/`, `data/processed/`)을 단일 `.zip` 아카이브로 신속하게 패키징해 **GitHub Releases의 Release Asset으로 업로드**하고 동료 연구원들과 공유할 때 활용합니다.
-
-> [!TIP]
-> **대형 데이터셋(Lakh, Slakh 등) 협업 권장 워크플로우**:  
-> 원본/전처리 데이터셋 전체를 압축하면 용량이 수 GB 이상으로 비대해집니다. 따라서 모델 가중치(`Checkpoint`)와 음색(`SoundFont`)만 가볍게 묶은 **초경량 에셋 번들(약 140MB)**을 공유하고, 데이터셋은 동료 연구원이 로컬에서 자동화 스크립트를 실행해 자급자족하도록 구성하는 것이 머신러닝 개발 업계 표준 가이드라인입니다.
+Git 관리에서 제외된 대용량 이진 자산들을 **역할별로 분리된 zip 파일**로 패키징해 GitHub Releases에 업로드합니다.  
+수신자는 목적에 맞는 파일만 선택적으로 다운로드할 수 있습니다.
 
 ```bash
-# [1] 모든 자산(가중치 + 사운드폰트 + 원본 데이터 + 전처리 데이터)을 전부 묶을 때 (약 200MB~수 GB)
-python scripts/package_assets.py --output jam_assets_bundle.zip
+# 학습 마일스톤마다 갱신 — 모델 가중치
+python scripts/package_assets.py --preset checkpoints   # → jam_checkpoints.zip
 
-# [2] 협업 권장: 데이터셋을 제외하고, 가중치(Checkpoint)와 음색(SoundFont)만 가볍게 묶을 때 (약 140MB)
-python scripts/package_assets.py --no-data --no-raw --output jam_light_assets.zip
+# 한 번만 업로드 — 피아노 음색 파일
+python scripts/package_assets.py --preset soundfonts    # → jam_soundfonts.zip
+
+# 한 번만 업로드 — 전처리 완료된 학습 데이터
+python scripts/package_assets.py --preset data          # → jam_data_processed.zip
 ```
 
-#### 📥 공유 받은 동료 연구원의 초고속 3단계 환경 복원법:
-1. 저장소의 **GitHub Releases** 탭에서 배포된 초경량 에셋 번들(`jam_light_assets.zip`)을 다운로드하여 **저장소 루트 디렉터리에 그대로 압축 해제**합니다. (자동으로 `checkpoints/`, `soundfonts/` 정렬 완료)
-2. 내장된 자동화 다운로드 스크립트를 한 줄 실행하여 원본 음악 데이터를 받아옵니다 (택1):
-   ```bash
-   # Option A: POP909 데이터셋 다운로드
-   python scripts/download_pop909.py
-   
-   # Option B: Slakh2100 (전체) 초경량 MIDI & 메타데이터 고속 다운로드 (HF API, 약 96MB)
-   python scripts/download_slakh.py
-   ```
-3. 로컬에서 전처리 스크립트를 고속 실행하여 훈련 텐서 데이터를 구축합니다 (택1):
-   ```bash
-   # Option A: POP909 데이터셋 전처리 실행
-   python scripts/prepare_data.py --pop909_dir data/raw/POP909 --out_dir data/processed
-   
-   # Option B: Slakh 데이터셋 전처리 실행
-   python scripts/prepare_data.py --slakh_dir data/raw/slakh2100 --out_dir data/processed
-   ```
-   *데이터와 모델 가중치가 완벽히 결합되어, 처음부터 다시 학습할 필요 없이 즉시 반주 생성 및 평가 스크립트 실행이 가능해집니다.*
+| 파일 | 내용 | 필요한 경우 |
+|---|---|---|
+| `jam_checkpoints.zip` | `checkpoints/` | 항상 필요 |
+| `jam_soundfonts.zip` | `soundfonts/` | 반주 생성(추론) 시 필요 |
+| `jam_data_processed.zip` | `data/processed/` | 학습 재개 시 필요 |
+
+> raw 데이터(`data/raw/`)는 공개 데이터셋이므로 포함하지 않습니다.  
+> 수신자는 `download_pop909.py` / `download_lakh.py` / `download_slakh.py` 로 직접 받습니다.
+
+#### 📥 수신자의 환경 복원
+모든 zip을 **저장소 루트 폴더에서 압축 해제**하면 `checkpoints/`, `soundfonts/`, `data/processed/` 가 자동으로 제자리에 생깁니다.  
+자세한 내용은 [TRAINING_GUIDE.md](TRAINING_GUIDE.md) 2단계를 참고하세요.
 
 ---
 
