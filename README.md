@@ -173,7 +173,14 @@ project_transformer/
 
 ---
 
-## 🚀 5. Quickstart & Essential Workflows
+## 🐳 5. 처음 시작하는 분 — Docker 학습 가이드
+
+Docker와 딥러닝 환경 설정이 처음이라면 **[TRAINING_GUIDE.md](TRAINING_GUIDE.md)** 를 먼저 읽어주세요.  
+클론 → 자산 다운로드 → Docker 빌드 → 16GB VRAM 설정 → 체크포인트 재개까지 단계별로 안내합니다.
+
+---
+
+## 🚀 6. Quickstart & Essential Workflows
 
 ### A. 역할별 설치 (Extra Groups)
 
@@ -297,7 +304,7 @@ python scripts/package_assets.py --no-data --no-raw --output jam_light_assets.zi
 
 ---
 
-## 🔌 6. Pluggable Registry System: Extensibility
+## 🔌 7. Pluggable Registry System: Extensibility
 
 프로젝트 내부의 모든 핵심 컴포넌트(토크나이저, 모델, 옵티마이저, 스케줄러)는 데코레이터 패턴 기반의 레지스트리 시스템으로 캡슐화되어 있어, 다른 연구원들이 코드를 직접 수정하지 않고 설정 변경만으로 새로운 실험을 할 수 있습니다.
 
@@ -314,7 +321,7 @@ class MySuperTokenizer(BaseTokenizer):
     # 추상 메서드 구현...
 ```
 
-## ⚖️ 7. Comparative Landscape & Technical Analysis (차별점 및 한계 분석)
+## ⚖️ 8. Comparative Landscape & Technical Analysis (차별점 및 한계 분석)
 
 본 프로젝트(**Symbolic Jam Transformer**)가 기존 AI 작곡 패러다임과 비교하여 가지는 고유한 가치와 개선점, 그리고 공학적 한계점을 엄격하게 요약합니다.
 

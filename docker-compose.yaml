@@ -9,11 +9,17 @@ services:
     build: .
     image: jam-transformer:latest
     runtime: nvidia
+    # Docker's default /dev/shm is 64MB — too small for PyTorch DataLoader workers
+    # and torch.compile's parallel Triton compile pool (BrokenProcessPool on small shm).
+    shm_size: '2gb'
     environment:
       - WANDB_API_KEY=${WANDB_API_KEY:-}
       - WANDB_DISABLED=${WANDB_DISABLED:-}
       - WANDB_NAME=${WANDB_NAME:-}
       - NVIDIA_VISIBLE_DEVICES=all
+      # Limit Triton compile parallelism to avoid OOM on memory-constrained boxes.
+      # Production 16GB+ machines can raise this (4 or 8) for faster first-step compile.
+      - TORCHINDUCTOR_COMPILE_THREADS=1
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints

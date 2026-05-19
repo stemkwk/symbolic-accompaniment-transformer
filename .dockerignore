@@ -8,9 +8,14 @@ venv/
 notebooks/
 data/
 checkpoints/
+pulled_checkpoints/
 logs/
 output/
+inspection/
 lightning_logs/
+soundfonts/
+tools/
+analysis/
 *.egg-info/
 build/
 dist/

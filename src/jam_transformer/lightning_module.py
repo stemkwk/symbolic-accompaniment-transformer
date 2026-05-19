@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 
 from jam_transformer.config import AppConfig
+from jam_transformer.logger import logger
 from jam_transformer.model import build_model
 from jam_transformer.tokenizer import REMITokenizer, build_tokenizer
 from jam_transformer.train_components import build_optimizer, build_scheduler
@@ -56,10 +57,9 @@ class JamTransformerLightning(pl.LightningModule):
                 self.model = torch.compile(
                     self.model, mode=config.model.compile_mode
                 )
+                logger.info(f"torch.compile enabled (mode={config.model.compile_mode}).")
             except Exception as e:    # noqa: BLE001
-                # Don't crash a paid run if compile is fussy on this hardware.
-                import warnings
-                warnings.warn(f"torch.compile failed ({e}); falling back to eager.")
+                logger.warning(f"torch.compile failed — running in eager mode. Reason: {e}")
 
     # ------------------------------------------------------------------
     # Forward / loss

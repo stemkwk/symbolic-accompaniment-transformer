@@ -98,10 +98,12 @@ augment:
 
 training:
   # Base batch size before VRAM-tier scaling (env_scaling.tiers multiplies this).
-  # On RTX 4090 (scale×2) → 128; A100 40G (scale×4) → 256; T4 (scale×1) → 64.
+  # On RTX 4090 (scale×2) → 64; A100 40G (scale×4) → 128; T4/16GB (scale×1) → 32.
+  # 16GB (RTX 4060Ti / 4070Ti Super): scale×1 → effective 32.
+  #   effective 64를 맞추려면: --set training.accumulate_grad_batches=2
   # Flash Attention (SDPA) keeps activation memory O(T) so large batches are safe.
-  # Override per-run: EXTRA="--set training.batch_size=128" ./server/20_train.sh
-  batch_size: 64
+  # Override per-run: --set training.batch_size=32 --set training.accumulate_grad_batches=2
+  batch_size: 32
   learning_rate: 3.0e-4
   epochs: 200
   beta1: 0.9
@@ -264,7 +266,7 @@ env_scaling:
       label: "RTX 3090 / 4090 / A5000"
     - vram_gte_gb: 14.0
       batch_scale: 1
-      label: "T4 / RTX 3080 Ti"
+      label: "RTX 4060Ti / 4070Ti Super / T4 / RTX 3080 Ti (16GB)"
   num_workers_colab: 2
   num_workers_windows: 0
   num_workers_server_max: 8
