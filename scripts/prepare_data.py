@@ -543,6 +543,15 @@ def _encode_one(
     if not events:
         return None
 
+    # Merge POP909's bridge track into piano so the accompaniment is a single
+    # polyphonic stream (consistent with Lakh/Slakh processing).
+    events = [
+        NoteEvent(track="piano" if e.track == "bridge" else e.track,
+                  bar=e.bar, position=e.position, pitch=e.pitch,
+                  duration=e.duration, velocity=e.velocity)
+        for e in events
+    ]
+
     chord_map = None
     key_root  = None
     key_mode  = None
@@ -672,9 +681,12 @@ def _lakh_track_events(
     melodic  = [melodic[i] for i in ranked]
     track_for: dict[int, str] = {}
     track_for[id(melodic[0])] = "melody"
-    if len(melodic) >= 2:
-        track_for[id(melodic[1])] = "bridge"
-    for inst in melodic[2:]:
+    # All non-melody melodic tracks + bass → single "piano" accompaniment stream.
+    # Previously melodic[1] was assigned to "bridge" (sub-melody), which caused
+    # the model to learn two separate monophonic lines instead of one polyphonic
+    # accompaniment. Merging everything into "piano" gives the model richer,
+    # chord-capable training targets and simplifies the generation task.
+    for inst in melodic[1:]:
         track_for[id(inst)] = "piano"
     for inst in bass:
         track_for[id(inst)] = "piano"
@@ -837,7 +849,7 @@ Examples:
     parser.add_argument("--synthetic",     action="store_true")
     parser.add_argument("--num_songs",     type=int, default=32)
     parser.add_argument("--cond_tracks",   type=str, default="melody")
-    parser.add_argument("--target_tracks", type=str, default="bridge,piano")
+    parser.add_argument("--target_tracks", type=str, default="piano")
     parser.add_argument("--pop909_prefix", type=str, default="pop909_")
     parser.add_argument("--lakh_prefix",   type=str, default="lakh_")
     parser.add_argument("--slakh_prefix",  type=str, default="slakh_")

@@ -205,7 +205,10 @@ def generate_accompaniment(
     )[0].cpu().tolist()
 
     all_events = tokenizer.decode(generated)
-    target_track_set = set(cfg.tokenizer.tracks) - set(cond_tracks)
+    # Generate only the single accompaniment track ("piano").
+    # bridge is no longer used as a generation target — all accompaniment
+    # content is merged into "piano" during data preparation.
+    target_track_set = {cfg.tokenizer.tracks[-1]}   # "piano"
     target_events = [e for e in all_events if e.track in target_track_set]
     melody_events, _ = midi_to_events(melody_midi, tokenizer.cfg, track_name_override)
 
