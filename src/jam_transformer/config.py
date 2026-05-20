@@ -33,6 +33,18 @@ class TokenizerConfig:
     tracks: List[str] = field(default_factory=lambda: ["melody", "accompaniment"])
     max_seq_len: int = 2048
     # ------------------------------------------------------------------
+    # Temporal interleaving block size (bar-block format)
+    # ------------------------------------------------------------------
+    # The sequence is built per block of `lookahead_bars` consecutive bars:
+    #   [melody of block]  SEP  [accompaniment of block]
+    # so the model sees the full melody of the block before generating that
+    # block's accompaniment (= a `lookahead_bars`-bar lookahead window).
+    #   1 = one bar at a time (default, tight locality, 1-bar anticipation)
+    #   N = N-bar blocks (more phrase-level anticipation, weaker locality)
+    # NOTE: this changes the token order → the data format. Changing it
+    # requires re-running prepare_data (it's part of the tokenizer fingerprint).
+    lookahead_bars: int = 1
+    # ------------------------------------------------------------------
     # Relative harmonic encoding settings
     # ------------------------------------------------------------------
     # chord_qualities: number of QUALITY token types.

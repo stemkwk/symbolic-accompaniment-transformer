@@ -106,37 +106,22 @@ def estimate_key_from_midi(midi_path: Path) -> tuple[int, int] | None:
     return (best_root, best_mode)
 
 
-def build_prompt(
-    melody_midi: Path,
+def _note_to_tokens(
+    e: "object",
     tokenizer: BaseTokenizer,
-    cond_tracks: list[str],
-    tempo_override: float | None = None,
-    track_name_override: dict[str, str] | None = None,
-) -> tuple[torch.Tensor, float]:
-    """Encode the melody MIDI into a token prompt for generation.
-
-    Returns (prompt_ids, tempo_bpm).
-    """
-    events, midi_tempo = midi_to_events(melody_midi, tokenizer.cfg, track_name_override)
-    if not events:
-        raise ValueError(f"No notes found in {melody_midi}")
-    tempo = tempo_override if tempo_override is not None else midi_tempo
-
-    key_root, key_mode = None, None
-    kresult = estimate_key_from_midi(melody_midi)
-    if kresult is not None:
-        key_root, key_mode = kresult
-        logger.info(
-            f"Key estimated: {_NOTE_NAMES[key_root]} {'major' if key_mode == 0 else 'minor'}"
-        )
-
-    ids, _mask = tokenizer.encode_song(
-        events, condition_tracks=cond_tracks, target_tracks=[], tempo_bpm=tempo,
-        key_root=key_root, key_mode=key_mode,
+    key_root: int,
+) -> list[int]:
+    """Encode a single NoteEvent into [CHROMA, OCTAVE, DUR, VEL] token ids."""
+    # e is a NoteEvent with .pitch, .duration, .velocity
+    dur = min(tokenizer.cfg.duration_max,
+              max(tokenizer.cfg.duration_min, int(e.duration)))  # type: ignore[attr-defined]
+    chroma_id, octave_id = tokenizer._pitch_to_chroma_octave(  # type: ignore[attr-defined]
+        int(e.pitch), key_root  # type: ignore[attr-defined]
     )
-    if ids and ids[-1] == tokenizer.eos_id:
-        ids = ids[:-1]
-    return torch.tensor(ids, dtype=torch.long), tempo
+    vel_bin = tokenizer.tid(  # type: ignore[attr-defined]
+        f"VEL_{tokenizer._velocity_bin(int(e.velocity))}"  # type: ignore[attr-defined]
+    )
+    return [chroma_id, octave_id, tokenizer.tid(f"DUR_{dur}"), vel_bin]  # type: ignore[attr-defined]
 
 
 def generate_accompaniment(
@@ -154,75 +139,217 @@ def generate_accompaniment(
     cfg_w: float = 0.0,
     structural_suppression: float | None = None,
 ) -> tuple:
-    """Full generation pipeline: melody MIDI → (output_midi, tempo).
+    """Full generation pipeline (bar-block interleaving): melody → (midi, tempo).
+
+    Inference strategy
+    ------------------
+    The song is processed one block of ``cfg.lookahead_bars`` bars at a time.
+    For each block we FORCE the block's melody tokens (BAR / POS / TRACK_mel /
+    notes) followed by a forced SEP, then let the model GENERATE that block's
+    accompaniment.  This matches the bar-block training distribution: the model
+    always sees the full melody of the block before writing its accompaniment.
 
     Returns (miditoolkit.MidiFile, tempo_bpm).
     """
+    from collections import defaultdict
+    from jam_transformer.model import DecoderTransformer
+
     icfg = cfg.inference
     temperature = temperature if temperature is not None else icfg.temperature
-    top_k = top_k if top_k is not None else icfg.top_k
-    top_p = top_p if top_p is not None else icfg.top_p
-    max_new = max_new_tokens if max_new_tokens is not None else icfg.max_new_tokens
+    top_k      = top_k      if top_k      is not None else icfg.top_k
+    top_p      = top_p      if top_p      is not None else icfg.top_p
+    max_new    = max_new_tokens if max_new_tokens is not None else icfg.max_new_tokens
     struct_supp = (structural_suppression if structural_suppression is not None
                    else getattr(icfg, "structural_suppression", 0.0))
 
     device = next(lit.parameters()).device
-    prompt_ids, tempo = build_prompt(
-        melody_midi, tokenizer, cond_tracks,
-        tempo_override=tempo_override,
-        track_name_override=track_name_override,
+    N = max(1, int(getattr(cfg.tokenizer, "lookahead_bars", 1)))
+
+    # ------------------------------------------------------------------ #
+    # 1. Load melody and estimate key / tempo
+    # ------------------------------------------------------------------ #
+    melody_events, midi_tempo = midi_to_events(
+        melody_midi, tokenizer.cfg, track_name_override
     )
-    prompt_ids = prompt_ids.to(device)
+    if not melody_events:
+        raise ValueError(f"No notes found in {melody_midi}")
 
-    # 프롬프트 + 생성 토큰이 모델 max_seq_len을 초과하지 않도록 클램핑
+    tempo = tempo_override if tempo_override is not None else midi_tempo
+
+    key_root: int | None = None
+    key_mode: int | None = None
+    kresult = estimate_key_from_midi(melody_midi)
+    if kresult is not None:
+        key_root, key_mode = kresult
+        logger.info(
+            f"Key estimated: {_NOTE_NAMES[key_root]} "
+            f"{'major' if key_mode == 0 else 'minor'}"
+        )
+    kr = key_root if key_root is not None else 0
+
+    # ------------------------------------------------------------------ #
+    # 2. Group melody events by bar → position
+    # ------------------------------------------------------------------ #
+    melody_cond_track = cond_tracks[0] if cond_tracks else "melody"
+    mel_by_bar: dict = defaultdict(lambda: defaultdict(list))
+    for e in melody_events:
+        if e.track == melody_cond_track:
+            mel_by_bar[e.bar][e.position].append(e)
+
+    active_bars = sorted(mel_by_bar.keys())
+    if not active_bars:
+        raise ValueError(f"No melody notes on track '{melody_cond_track}' in {melody_midi}")
+    first_bar, last_bar = active_bars[0], active_bars[-1]
+
+    # ------------------------------------------------------------------ #
+    # 3. Build header token ids (BOS / KEY / TEMPO)
+    # ------------------------------------------------------------------ #
+    header_ids: list[int] = [tokenizer.bos_id]
+    if tokenizer._key_min_id >= 0 and key_root is not None:  # type: ignore[attr-defined]
+        header_ids.append(tokenizer.key_token_id(kr, key_mode or 0))
+    header_ids.append(tokenizer.tid(f"TEMPO_{tokenizer.tempo_bin(tempo)}"))  # type: ignore[attr-defined]
+
     model_max = getattr(cfg.model, "max_seq_len", 4096)
-    max_new = min(max_new, model_max - prompt_ids.numel())
-    if max_new <= 0:
-        raise ValueError(
-            f"프롬프트({prompt_ids.numel()} tokens)가 model.max_seq_len({model_max})에 도달했습니다. "
-            "더 짧은 멜로디를 입력하거나 model.max_seq_len을 늘려주세요."
+    logger.info(
+        f"Bar-block generation | tempo={tempo:.1f} BPM | lookahead={N} bar(s) | "
+        f"bars {first_bar}..{last_bar} | max_new={max_new}"
+    )
+
+    # ------------------------------------------------------------------ #
+    # 4. Structural-suppression state + token id shortcuts
+    # ------------------------------------------------------------------ #
+    use_struct_supp = (
+        struct_supp > 0.0 and tokenizer.vel_min_id >= 0 and tokenizer.vel_max_id >= 0
+    )
+    if use_struct_supp:
+        vel_lo, vel_hi = tokenizer.vel_min_id, tokenizer.vel_max_id
+        struct_idx_t = torch.tensor(
+            tokenizer.structural_ids(), dtype=torch.long, device=device
         )
-    logger.info(f"Prompt: {prompt_ids.numel()} tokens  |  tempo={tempo:.1f} BPM  |  max_new={max_new}")
+    else:
+        vel_lo = vel_hi = -1
 
-    uncond_ids = None
-    if cfg_w > 0.0:
-        uncond_ids = torch.tensor(
-            tokenizer.make_uncond_prompt(prompt_ids), dtype=torch.long, device=device,
-        )
+    bar_id = tokenizer.bar_id
+    sep_id = tokenizer.sep_id
+    eos_id = tokenizer.eos_id
 
-    generated = lit.model.generate(
-        prompt_ids,
-        max_new_tokens=max_new,
-        eos_id=tokenizer.eos_id,
-        temperature=temperature,
-        top_k=top_k,
-        top_p=top_p,
-        uncond_prompt_ids=uncond_ids,
-        cfg_w=cfg_w,
-        structural_suppression=struct_supp,
-        vel_id_range=(tokenizer.vel_min_id, tokenizer.vel_max_id),
-        struct_ids=tokenizer.structural_ids(),
-    )[0].cpu().tolist()
+    # ------------------------------------------------------------------ #
+    # 5. Step helper (single forward, returns last-position logits)
+    # ------------------------------------------------------------------ #
+    @torch.no_grad()
+    def _step(tok_ids: list[int], kv_caches):
+        t = torch.tensor([tok_ids], dtype=torch.long, device=device)
+        logits, new_caches = lit.model(t, kv_caches=kv_caches)
+        return logits[:, -1, :], new_caches
 
-    all_events = tokenizer.decode(generated)
-    # Generate only the single accompaniment track (last track = "accompaniment").
-    # All non-melody content is merged into this track during data preparation.
-    target_track_set = {cfg.tokenizer.tracks[-1]}   # "accompaniment"
-    target_events = [e for e in all_events if e.track in target_track_set]
-    melody_events, _ = midi_to_events(melody_midi, tokenizer.cfg, track_name_override)
+    last_logits, kv_caches = _step(header_ids, None)
+    all_ids: list[int] = list(header_ids)
+    generated_count = 0
+    done = False
+
+    # ------------------------------------------------------------------ #
+    # 6. Bar-block generation loop
+    # ------------------------------------------------------------------ #
+    bar = first_bar
+    while bar <= last_bar and not done:
+        if len(all_ids) >= model_max:
+            logger.warning("Reached model max_seq_len — stopping early.")
+            break
+
+        # bars belonging to the current N-aligned block (capped at last_bar)
+        block_idx = bar // N
+        bars_in_block: list[int] = []
+        b = bar
+        while b <= last_bar and b // N == block_idx:
+            bars_in_block.append(b)
+            b += 1
+
+        # ---- Force melody section + SEP ---------------------------------
+        forced: list[int] = []
+        for bb in bars_in_block:
+            forced.append(bar_id)
+            for pos in sorted(mel_by_bar[bb].keys()):
+                forced.append(tokenizer.tid(f"POS_{pos}"))
+                forced.append(tokenizer.tid(f"TRACK_{melody_cond_track}"))
+                for e in sorted(mel_by_bar[bb][pos], key=lambda e: e.pitch):
+                    forced.extend(_note_to_tokens(e, tokenizer, kr))
+        forced.append(sep_id)
+        last_logits, kv_caches = _step(forced, kv_caches)
+        all_ids.extend(forced)
+
+        # ---- Generate accompaniment for this block ----------------------
+        # The acc section spans len(bars_in_block) bars → (M-1) internal BARs
+        # are allowed; the M-th BAR signals the next block (stop, discard it).
+        M = len(bars_in_block)
+        acc_bars_seen = 0
+        block_budget = min(max_new - generated_count, 64 * M)
+
+        for _ in range(block_budget):
+            logits_use = last_logits
+            if use_struct_supp and all_ids and (vel_lo <= all_ids[-1] <= vel_hi):
+                logits_use = logits_use.clone()
+                logits_use[:, struct_idx_t] -= struct_supp
+
+            next_tok = DecoderTransformer._sample(logits_use, temperature, top_k, top_p)
+            next_id = int(next_tok.item())
+
+            if next_id == eos_id:
+                done = True
+                break
+
+            if next_id == bar_id:
+                if acc_bars_seen < M - 1:
+                    # internal bar of a multi-bar block → keep it, advance
+                    acc_bars_seen += 1
+                    all_ids.append(next_id)
+                    generated_count += 1
+                    last_logits, kv_caches = _step([next_id], kv_caches)
+                    continue
+                # block's accompaniment finished → discard this BAR, next block
+                break
+
+            # SEP should not appear inside generated accompaniment; treat as stop.
+            if next_id == sep_id:
+                break
+
+            all_ids.append(next_id)
+            generated_count += 1
+            last_logits, kv_caches = _step([next_id], kv_caches)
+            if generated_count >= max_new:
+                done = True
+                break
+
+        bar = bars_in_block[-1] + 1
+
+    # ------------------------------------------------------------------ #
+    # 7. Decode → NoteEvents, shift acc bars to absolute, render MIDI
+    # ------------------------------------------------------------------ #
+    decoded = tokenizer.decode(all_ids)
+    target_track_name = cfg.tokenizer.tracks[-1]   # "accompaniment"
+    # decode() numbers bars 0-indexed from the first BAR (= first_bar absolute).
+    acc_events = []
+    for e in decoded:
+        if e.track == target_track_name:
+            e.bar = e.bar + first_bar
+            acc_events.append(e)
 
     midi = events_to_midi(
-        [*melody_events, *target_events], cfg.tokenizer,
+        [*melody_events, *acc_events], cfg.tokenizer,
         tempo_bpm=tempo,
         programs=cfg.midi_output.programs,
     )
 
     hcfg = cfg.humanize
     if hcfg.enabled:
-        midi = humanize_midi(midi,
-                             velocity_std=hcfg.velocity_std,
-                             timing_std_ms=hcfg.timing_std_ms,
-                             duration_std_ms=hcfg.duration_std_ms)
+        midi = humanize_midi(
+            midi,
+            velocity_std=hcfg.velocity_std,
+            timing_std_ms=hcfg.timing_std_ms,
+            duration_std_ms=hcfg.duration_std_ms,
+        )
 
-    logger.info(f"Generated {len(target_events)} notes across target tracks.")
+    logger.info(
+        f"Generated {len(acc_events)} accompaniment notes "
+        f"({generated_count} tokens) over {last_bar - first_bar + 1} bars."
+    )
     return midi, tempo

@@ -25,8 +25,9 @@ tokenizer:
   tempo_bins: 16
   tempo_min: 50
   tempo_max: 200
-  # Track tags ("melody" = condition, others = target).
-  tracks: ["melody", "bridge", "piano"]
+  # Track tags: "melody" = condition (input), "accompaniment" = target (generated).
+  # Interleaved format: both tracks are interleaved by time position (no SEP token).
+  tracks: ["melody", "accompaniment"]
   # Maximum sequence length (after concatenating condition + target).
   # 2560: token_add_version Lakh preprocessing 기준값.
   # 2560-token window ≈ 12-13 bars — chord-progression span 충분히 커버.
@@ -91,10 +92,9 @@ augment:
   duration_jitter_bins: 1
   # Classifier-Free Guidance: probability of replacing the melody condition
   # with PAD tokens so the model also learns P(accompaniment) (no prompt).
-  # At inference, combining the conditional + unconditional logits with a
-  # guidance weight w > 0 lets you crank how strongly the output follows
-  # the input melody. Standard value: 0.1 (MusicGen / Stable Audio).
-  condition_dropout_prob: 0.15
+  # NOTE: CFG / condition dropout is NOT supported in interleaved format
+  # (no SEP token → dropout is a no-op). Set to 0.0.
+  condition_dropout_prob: 0.0
 
 training:
   # Base batch size before VRAM-tier scaling (env_scaling.tiers multiplies this).
@@ -248,9 +248,8 @@ midi_output:
   # Common: 0=acoustic grand, 25=steel guitar, 40=violin, 48=strings,
   #         56=trumpet, 65=alto sax, 73=flute, 19=church organ
   programs:
-    melody: 40    # violin
-    bridge: 25    # acoustic guitar (steel)
-    piano:  0     # acoustic grand
+    melody:         40    # violin
+    accompaniment:   0    # acoustic grand piano
 
 env_scaling:
   # Per-VRAM-tier batch-size multiplier (linear LR scaling applied too).

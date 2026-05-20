@@ -24,22 +24,22 @@ Vocabulary layout (174 tokens)
 --------------------------------
   [0]          PAD
   [1]          BOS
-  [2]          SEP
+  [2]          SEP           (reserved; not used in interleaved format)
   [3]          EOS
   [4]          BAR
   [5..20]      POS_0..POS_15           (16 positions per bar)
   [21..36]     TEMPO_0..TEMPO_15       (16 bins, log-scale 50–200 BPM)
-  [37..39]     TRACK_melody/bridge/piano
-  [40..51]     CHROMA_0..CHROMA_11     pitch class relative to key root
-  [52..60]     OCTAVE_1..OCTAVE_9      abs_pitch // 12
-  [61..92]     DUR_1..DUR_32
-  [93..124]    VEL_0..VEL_31
-  [125..136]   SCALE_DEGREE_0..11      chord root relative to key root
-  [137..148]   QUALITY_{name} × 12    chord quality
-  [149]        CHORD_N                 no chord / unknown
-  [150..173]   KEY_{r}_maj/min × 24   global key anchor
+  [37..38]     TRACK_melody/accompaniment
+  [39..50]     CHROMA_0..CHROMA_11     pitch class relative to key root
+  [51..59]     OCTAVE_1..OCTAVE_9      abs_pitch // 12
+  [60..91]     DUR_1..DUR_32
+  [92..123]    VEL_0..VEL_31
+  [124..135]   SCALE_DEGREE_0..11      chord root relative to key root
+  [136..147]   QUALITY_{name} × 12    chord quality
+  [148]        CHORD_N                 no chord / unknown
+  [149..172]   KEY_{r}_maj/min × 24   global key anchor
 
-Total: 174 tokens.
+Total: 173 tokens.
 
 Tempo log-scale rationale
 --------------------------
@@ -49,19 +49,26 @@ musical tempo categories (Larghetto→Prestissimo) without the density
 imbalance of linear binning (which over-resolves 50-100 BPM and
 under-resolves 150-200 BPM).
 
-Sequence format
----------------
+Sequence format — TEMPORAL INTERLEAVING
+----------------------------------------
   <BOS> KEY_{r}_{mode} TEMPO_{bin}
-    TRACK_melody
-      BAR  [SCALE_DEGREE_x QUALITY_y | CHORD_N]
-      POS_n  CHROMA_c OCTAVE_o  DUR_d  VEL_v
-      ...
-    <SEP>
-    TRACK_piano
-      BAR  [SCALE_DEGREE_x QUALITY_y | CHORD_N]
-      POS_n  CHROMA_c OCTAVE_o  DUR_d  VEL_v
-      ...
+    BAR  [SCALE_DEGREE_x QUALITY_y | CHORD_N]        ← shared across tracks
+    POS_n
+      TRACK_melody   CHROMA_c OCTAVE_o DUR_d VEL_v   ← condition (mask=False)
+      TRACK_acc      CHROMA_c OCTAVE_o DUR_d VEL_v   ← target    (mask=True)
+    POS_n ...
+    BAR  ...
   <EOS>
+
+At each (bar, position) time step the condition track's notes appear first,
+followed immediately by the target track's notes.  This places the melody
+and accompaniment notes that are harmonically simultaneous adjacent in the
+token sequence, giving the model direct causal access to the melody context
+when predicting each accompaniment note.
+
+The <SEP> token is reserved in the vocabulary but NOT emitted in the
+interleaved format.  CFG (classifier-free guidance) is not supported in
+interleaved mode; set cfg_w=0 in inference config.
 
 Augmentation contract
 ---------------------
@@ -616,95 +623,62 @@ class REMITokenizer(BaseTokenizer):
         return octave * 12 + abs_pc
 
     # ------------------------------------------------------------------
-    # Track emission
+    # Encoding (bar-block temporal interleaving)
     # ------------------------------------------------------------------
-    def _emit_track(
-        self,
-        events: Sequence[NoteEvent],
-        track: str,
-        key_root: int,
-        chord_map: "dict[tuple[int, int], tuple[int, int] | None] | None" = None,
-    ) -> List[int]:
-        """Emit TRACK / BAR / [chord tokens] / POS / CHROMA / OCTAVE / DUR / VEL.
+    def _group_notes(
+        self, events: Sequence[NoteEvent], tracks: "set[str]"
+    ) -> "dict[int, dict[int, dict[str, list[NoteEvent]]]]":
+        """bar → position → track → sorted note list (pitch/range filtered)."""
+        from collections import defaultdict
 
-        chord_map: (bar, pos_resolution_units) →
-            (chord_root_0_11, quality_idx)   for a known chord
-            None                             for CHORD_N
-
-        A chord token pair (SCALE_DEGREE + QUALITY) or CHORD_N is emitted:
-          • Right after each BAR token (chord at beat 0), only on change.
-          • Before a POS_x token (x > 0) when chord changes mid-bar.
-        """
-        track_events = [e for e in events if e.track == track]
-        if not track_events:
-            return []
-
-        track_events = sorted(track_events, key=lambda e: (e.bar, e.position, e.pitch))
-
-        out: List[int] = [self.tid(f"TRACK_{track}")]
-        cur_bar = -1
-        cur_pos = -1
-        last_chord_sig: Optional[tuple] = "UNSET"  # sentinel distinct from None
-
-        def _emit_chord(chord_val: "tuple[int,int] | None") -> None:
-            nonlocal last_chord_sig
-            # "UNSET" sentinel: position not present in chord_map — no change.
-            if chord_val == "UNSET":
-                return
-            if chord_val == last_chord_sig:
-                return
-            last_chord_sig = chord_val
-            if chord_val is None:
-                out.append(self._chord_n_id)
-            else:
-                root, q_idx = chord_val
-                if q_idx >= self._n_chord_qualities:
-                    out.append(self._chord_n_id)
-                    return
-                sd = (root - key_root) % 12
-                out.append(self._sd_min_id + sd)
-                out.append(self._quality_min_id + q_idx)
-
-        # Hard upper bound on bar index. Prevents runaway token generation from
-        # MIDI files with tick-overflow or corrupted bar indices. Mirrors the
-        # _MAX_BARS = 2000 guard in prepare_data._lakh_track_events().
         _MAX_BAR_GUARD = 2000
-
-        for e in track_events:
+        grouped: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        for e in events:
+            if e.track not in tracks:
+                continue
             if e.pitch < self.cfg.pitch_min or e.pitch > self.cfg.pitch_max:
                 continue
             if e.bar > _MAX_BAR_GUARD:
                 logger.warning(
-                    f"_emit_track: skipping note at bar={e.bar} > {_MAX_BAR_GUARD} "
-                    f"(tick overflow / corrupted MIDI). track={track}"
+                    f"encode_song: skipping note at bar={e.bar} > {_MAX_BAR_GUARD} "
+                    f"(tick overflow / corrupted MIDI). track={e.track}"
                 )
                 continue
+            grouped[e.bar][e.position][e.track].append(e)
+        return grouped
 
-            while cur_bar < e.bar:
-                out.append(self.tid("BAR"))
-                cur_bar += 1
-                cur_pos = -1
-                if chord_map is not None:
-                    _emit_chord(chord_map.get((cur_bar, 0), "UNSET"))
+    def _emit_notes_at(
+        self,
+        grouped,
+        bar: int,
+        track_order: Sequence[str],
+        kr: int,
+        ids: List[int],
+        mask: List[bool],
+        is_target: bool,
+    ) -> None:
+        """Emit POS / TRACK / note tokens for every position of `bar`."""
+        bar_positions = grouped.get(bar, {})
+        for pos in sorted(bar_positions.keys()):
+            pos_tracks = bar_positions[pos]
+            emitted_pos = False
+            for track in track_order:
+                if track not in pos_tracks:
+                    continue
+                if not emitted_pos:
+                    ids.append(self.tid(f"POS_{pos}")); mask.append(is_target)
+                    emitted_pos = True
+                ids.append(self.tid(f"TRACK_{track}")); mask.append(is_target)
+                for e in sorted(pos_tracks[track], key=lambda e: e.pitch):
+                    dur = min(self.cfg.duration_max,
+                              max(self.cfg.duration_min, e.duration))
+                    chroma_id, octave_id = self._pitch_to_chroma_octave(e.pitch, kr)
+                    ids.append(chroma_id);              mask.append(is_target)
+                    ids.append(octave_id);              mask.append(is_target)
+                    ids.append(self.tid(f"DUR_{dur}"));  mask.append(is_target)
+                    ids.append(self.tid(f"VEL_{self._velocity_bin(e.velocity)}"))
+                    mask.append(is_target)
 
-            if e.position != cur_pos:
-                if chord_map is not None and e.position != 0:
-                    _emit_chord(chord_map.get((cur_bar, e.position), "UNSET"))
-                out.append(self.tid(f"POS_{e.position}"))
-                cur_pos = e.position
-
-            dur = min(self.cfg.duration_max, max(self.cfg.duration_min, e.duration))
-            chroma_id, octave_id = self._pitch_to_chroma_octave(e.pitch, key_root)
-            out.append(chroma_id)
-            out.append(octave_id)
-            out.append(self.tid(f"DUR_{dur}"))
-            out.append(self.tid(f"VEL_{self._velocity_bin(e.velocity)}"))
-
-        return out
-
-    # ------------------------------------------------------------------
-    # Encoding
-    # ------------------------------------------------------------------
     def encode_song(
         self,
         events: Sequence[NoteEvent],
@@ -715,45 +689,126 @@ class REMITokenizer(BaseTokenizer):
         key_root: int | None = None,
         key_mode: int | None = None,
     ) -> Tuple[List[int], List[bool]]:
-        """Return (token_ids, target_mask).
+        """Return (token_ids, target_mask) in bar-block interleaving format.
 
-        key_root: 0-11 (C=0 … B=11). Used to compute CHROMA and SCALE_DEGREE.
-                  Defaults to 0 (C) when None.
+        The song is split into blocks of ``cfg.lookahead_bars`` consecutive bars.
+        Each block is laid out melody-first then accompaniment::
+
+            BAR  POS TRACK_mel [notes]  POS TRACK_mel [notes]   ← block melody
+            SEP
+            [chord] POS TRACK_acc [notes]  ...                  ← block accompaniment
+            (BAR [chord] POS TRACK_acc [notes] ... for 2nd+ bars of the block)
+
+        The model therefore sees the FULL melody of the block before generating
+        that block's accompaniment — a ``lookahead_bars``-bar anticipation window.
+
+        Mask: melody section + SEP → False (condition / no loss).
+              accompaniment section (incl. its BAR/POS/chord) → True (target).
+
+        key_root: 0-11 (C=0 … B=11). Defaults to 0 (C) when None.
         key_mode: 0=major, 1=minor.  Defaults to 0 when None.
-        chord_map: see module docstring for format.
+        chord_map: see module docstring; emitted in the accompaniment section.
         """
         kr = int(key_root) if key_root is not None else 0
         km = int(key_mode) if key_mode is not None else 0
+        N = max(1, int(getattr(self.cfg, "lookahead_bars", 1)))
+
+        cond_set = set(condition_tracks)
+        tgt_set = set(target_tracks)
+        track_order = list(condition_tracks) + [
+            t for t in target_tracks if t not in cond_set
+        ]
+
+        mel_grouped = self._group_notes(events, cond_set)
+        acc_grouped = self._group_notes(events, tgt_set)
+
+        # Bars that contain ANY note (melody or accompaniment), chronological.
+        active_bars = sorted(set(mel_grouped.keys()) | set(acc_grouped.keys()))
 
         ids: List[int] = [self.bos_id]
-
+        mask: List[bool] = [False]
         if self._key_min_id >= 0 and key_root is not None:
-            ids.append(self.key_token_id(kr, km))
-
+            ids.append(self.key_token_id(kr, km)); mask.append(False)
         if tempo_bpm is not None:
-            ids.append(self.tid(f"TEMPO_{self.tempo_bin(tempo_bpm)}"))
+            ids.append(self.tid(f"TEMPO_{self.tempo_bin(tempo_bpm)}")); mask.append(False)
 
-        for tr in condition_tracks:
-            ids.extend(self._emit_track(events, tr, kr, chord_map=chord_map))
-        ids.append(self.sep_id)
-        cond_len = len(ids)
+        # ---- chord emission helper (accompaniment section only) -------------
+        last_chord_sig: object = "UNSET"
 
-        for tr in target_tracks:
-            ids.extend(self._emit_track(events, tr, kr, chord_map=chord_map))
-        ids.append(self.eos_id)
+        def _reset_chord() -> None:
+            nonlocal last_chord_sig
+            last_chord_sig = "UNSET"
 
-        mask = [False] * cond_len + [True] * (len(ids) - cond_len)
+        def _append_chord(chord_val: object) -> None:
+            nonlocal last_chord_sig
+            if chord_val == "UNSET" or chord_val == last_chord_sig:
+                return
+            last_chord_sig = chord_val
+            if chord_val is None:
+                ids.append(self._chord_n_id); mask.append(True)
+            else:
+                root, q_idx = chord_val  # type: ignore[misc]
+                if q_idx >= self._n_chord_qualities:
+                    ids.append(self._chord_n_id); mask.append(True)
+                    return
+                sd = (root - kr) % 12
+                ids.append(self._sd_min_id + sd);          mask.append(True)
+                ids.append(self._quality_min_id + q_idx);  mask.append(True)
+
+        # ---- iterate blocks of N consecutive (active) bars ------------------
+        i = 0
+        while i < len(active_bars):
+            block_start = active_bars[i]
+            block_idx = block_start // N
+            # collect every active bar that falls into this block
+            bars_in_block: List[int] = []
+            while i < len(active_bars) and active_bars[i] // N == block_idx:
+                bars_in_block.append(active_bars[i])
+                i += 1
+
+            # ---- melody section: BAR + melody notes for each bar ----------
+            for bar in bars_in_block:
+                ids.append(self.bar_id); mask.append(False)
+                self._emit_notes_at(mel_grouped, bar, track_order, kr,
+                                    ids, mask, is_target=False)
+
+            # ---- SEP: melody → accompaniment boundary for this block ------
+            ids.append(self.sep_id); mask.append(False)
+
+            # ---- accompaniment section: chord + notes for each bar --------
+            _reset_chord()
+            for j, bar in enumerate(bars_in_block):
+                if j > 0:
+                    ids.append(self.bar_id); mask.append(True)
+                if chord_map is not None:
+                    _append_chord(chord_map.get((bar, 0), "UNSET"))
+                self._emit_notes_at(acc_grouped, bar, track_order, kr,
+                                    ids, mask, is_target=True)
+
+        ids.append(self.eos_id); mask.append(False)
         return ids, mask
 
     # ------------------------------------------------------------------
     # Decoding
     # ------------------------------------------------------------------
     def decode(self, ids: Iterable[int]) -> List[NoteEvent]:
-        """Turn token ids back into NoteEvents.
+        """Turn token ids back into NoteEvents (bar-block interleaving format).
 
         Extracts key_root from the first KEY_* token in the sequence.
         Falls back to key_root=0 (C) if no KEY token is present.
-        CHORD_N / SCALE_DEGREE / QUALITY tokens are skipped (harmonic context).
+
+        State machine
+        -------------
+        Bars are numbered 0-indexed from the first BAR token. Within a block:
+          • Melody section BAR tokens advance the absolute bar counter and are
+            recorded in ``block_bars``.
+          • SEP switches to the accompaniment section and rewinds the bar
+            counter to the block's first bar.
+          • Accompaniment-section BAR tokens step through ``block_bars``; once
+            exhausted, the next BAR starts a new block's melody section.
+
+        This keeps melody and accompaniment of the same bar aligned to the same
+        bar index. CHORD_N / SCALE_DEGREE / QUALITY tokens are skipped.
         """
         id_list = [i for i in ids if 0 <= i < self.vocab_size]
 
@@ -767,8 +822,11 @@ class REMITokenizer(BaseTokenizer):
 
         events: List[NoteEvent] = []
         cur_track = self.cfg.tracks[0]
-        cur_bar   = 0
+        cur_bar   = -1            # first melody BAR brings this to 0
         cur_pos   = 0
+        in_acc    = False         # False = melody section, True = accompaniment
+        block_bars: List[int] = []
+        acc_ptr   = 0
         pending: Dict[str, int] = {}
 
         def _flush() -> None:
@@ -779,7 +837,7 @@ class REMITokenizer(BaseTokenizer):
                 pitch = max(self.cfg.pitch_min, min(self.cfg.pitch_max, pitch))
                 events.append(NoteEvent(
                     track=cur_track,
-                    bar=cur_bar,
+                    bar=max(0, cur_bar),
                     position=cur_pos,
                     pitch=pitch,
                     duration=pending["dur"],
@@ -791,16 +849,34 @@ class REMITokenizer(BaseTokenizer):
             tok = self.id_to_token[tid]
             if tok == self.EOS:
                 break
-            if tok in (self.PAD, self.BOS, self.SEP):
+            if tok in (self.PAD, self.BOS):
+                continue
+            if tok == self.SEP:
+                # Melody → accompaniment boundary: rewind to block's first bar.
+                _flush()
+                in_acc = True
+                acc_ptr = 0
+                if block_bars:
+                    cur_bar = block_bars[0]
+                cur_pos = 0
                 continue
             if tok.startswith("TRACK_"):
                 _flush()
                 cur_track = tok[len("TRACK_"):]
-                cur_bar = 0
-                cur_pos = 0
             elif tok == "BAR":
                 _flush()
-                cur_bar += 1
+                if not in_acc:
+                    cur_bar += 1
+                    block_bars.append(cur_bar)
+                elif acc_ptr + 1 < len(block_bars):
+                    acc_ptr += 1
+                    cur_bar = block_bars[acc_ptr]
+                else:
+                    # Accompaniment bars exhausted → new block's melody section.
+                    in_acc = False
+                    cur_bar = (block_bars[-1] if block_bars else cur_bar) + 1
+                    block_bars = [cur_bar]
+                    acc_ptr = 0
                 cur_pos = 0
             elif tok.startswith("POS_"):
                 _flush()
