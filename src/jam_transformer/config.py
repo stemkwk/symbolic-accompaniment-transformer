@@ -30,7 +30,7 @@ class TokenizerConfig:
     tempo_bins: int = 16
     tempo_min: int = 50
     tempo_max: int = 200
-    tracks: List[str] = field(default_factory=lambda: ["melody", "bridge", "piano"])
+    tracks: List[str] = field(default_factory=lambda: ["melody", "accompaniment"])
     max_seq_len: int = 2048
     # ------------------------------------------------------------------
     # Relative harmonic encoding settings
@@ -187,9 +187,8 @@ class MidiOutputConfig:
     # Common values: 0=acoustic grand, 25=steel guitar, 40=violin, 48=strings,
     #   56=trumpet, 65=alto sax, 73=flute, 0=piano.
     programs: Dict[str, int] = field(default_factory=lambda: {
-        "melody": 40,   # violin
-        "bridge": 25,   # acoustic guitar (steel)
-        "piano":  0,    # acoustic grand
+        "melody":        40,   # violin
+        "accompaniment":  0,   # acoustic grand piano
     })
 
 

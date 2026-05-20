@@ -52,12 +52,12 @@ def test_tokenizer_round_trip(tokenizer):
     events = [
         NoteEvent("melody", 0, 0, 60, 4, 90),
         NoteEvent("melody", 0, 4, 64, 4, 80),
-        NoteEvent("piano",  0, 0, 48, 16, 70),
-        NoteEvent("piano",  0, 0, 52, 16, 70),
-        NoteEvent("piano",  0, 0, 55, 16, 70),
+        NoteEvent("accompaniment",  0, 0, 48, 16, 70),
+        NoteEvent("accompaniment",  0, 0, 52, 16, 70),
+        NoteEvent("accompaniment",  0, 0, 55, 16, 70),
     ]
     ids, mask = tokenizer.encode_song(
-        events, condition_tracks=["melody"], target_tracks=["piano"], tempo_bpm=120,
+        events, condition_tracks=["melody"], target_tracks=["accompaniment"], tempo_bpm=120,
     )
     assert any(mask), "target mask must mark at least one position"
     assert ids[0] == tokenizer.bos_id
@@ -150,12 +150,12 @@ def test_pitch_transpose_preserves_chroma_updates_octave(tokenizer):
     # Encode a single note: C4 (MIDI 60), key C major
     events = [
         NoteEvent("melody", 0, 0, 60, 4, 90),
-        NoteEvent("piano",  0, 0, 72, 4, 70),   # C5 — OCTAVE should shift
+        NoteEvent("accompaniment",  0, 0, 72, 4, 70),   # C5 — OCTAVE should shift
     ]
     ids, _ = tokenizer.encode_song(
         events,
         condition_tracks=["melody"],
-        target_tracks=["piano"],
+        target_tracks=["accompaniment"],
         tempo_bpm=120,
         key_root=0, key_mode=0,  # C major
     )
@@ -218,9 +218,9 @@ def test_dataset_augmentation_only_runs_on_train(tmp_path, cfg, tokenizer):
     # possible without clipping.
     events = [NoteEvent("melody", b, p * 4, 60 + (b + p) % 12, 4, 80)
               for b in range(4) for p in range(4)]
-    events += [NoteEvent("piano", b, 0, 48 + b, 8, 70) for b in range(4)]
+    events += [NoteEvent("accompaniment", b, 0, 48 + b, 8, 70) for b in range(4)]
     ids, mask = tokenizer.encode_song(
-        events, condition_tracks=["melody"], target_tracks=["piano"], tempo_bpm=120,
+        events, condition_tracks=["melody"], target_tracks=["accompaniment"], tempo_bpm=120,
     )
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -233,7 +233,7 @@ def test_dataset_augmentation_only_runs_on_train(tmp_path, cfg, tokenizer):
         "vocab_size": tokenizer.vocab_size,
         "tokenizer_config": asdict(tokenizer.cfg),
         "tokenizer_fingerprint": tokenizer_fingerprint(tokenizer.cfg),
-        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["piano"],
+        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["accompaniment"],
     }), encoding="utf-8")
     (data_dir / "_chunk_index.json").write_text(json.dumps({"t.pt": len(ids)}),
                                                 encoding="utf-8")
@@ -265,9 +265,9 @@ def test_pitch_transpose_zero_disables(tmp_path, cfg, tokenizer):
     from scripts.prepare_data import tokenizer_fingerprint
 
     events = [NoteEvent("melody", 0, 0, 60, 4, 80),
-              NoteEvent("piano",  0, 0, 48, 8, 70)]
+              NoteEvent("accompaniment",  0, 0, 48, 8, 70)]
     ids, mask = tokenizer.encode_song(
-        events, condition_tracks=["melody"], target_tracks=["piano"], tempo_bpm=120,
+        events, condition_tracks=["melody"], target_tracks=["accompaniment"], tempo_bpm=120,
     )
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -278,7 +278,7 @@ def test_pitch_transpose_zero_disables(tmp_path, cfg, tokenizer):
         "vocab_size": tokenizer.vocab_size,
         "tokenizer_config": asdict(tokenizer.cfg),
         "tokenizer_fingerprint": tokenizer_fingerprint(tokenizer.cfg),
-        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["piano"],
+        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["accompaniment"],
     }), encoding="utf-8")
     (data_dir / "_chunk_index.json").write_text(json.dumps({"t.pt": len(ids)}),
                                                 encoding="utf-8")
@@ -305,9 +305,9 @@ def test_condition_dropout_prob_zero_no_change(tmp_path, cfg, tokenizer):
     from scripts.prepare_data import tokenizer_fingerprint
 
     events = [NoteEvent("melody", 0, p * 2, 60 + p, 2, 80) for p in range(8)]
-    events += [NoteEvent("piano", 0, 0, 48, 16, 70)]
+    events += [NoteEvent("accompaniment", 0, 0, 48, 16, 70)]
     ids, mask = tokenizer.encode_song(
-        events, condition_tracks=["melody"], target_tracks=["piano"], tempo_bpm=120,
+        events, condition_tracks=["melody"], target_tracks=["accompaniment"], tempo_bpm=120,
     )
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -317,7 +317,7 @@ def test_condition_dropout_prob_zero_no_change(tmp_path, cfg, tokenizer):
         "vocab_size": tokenizer.vocab_size,
         "tokenizer_config": asdict(tokenizer.cfg),
         "tokenizer_fingerprint": tokenizer_fingerprint(tokenizer.cfg),
-        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["piano"],
+        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["accompaniment"],
     }), encoding="utf-8")
     (data_dir / "_chunk_index.json").write_text(json.dumps({"t.pt": len(ids)}),
                                                 encoding="utf-8")
@@ -346,9 +346,9 @@ def test_condition_dropout_prob_one_replaces_condition(tmp_path, cfg, tokenizer)
     from scripts.prepare_data import tokenizer_fingerprint
 
     events = [NoteEvent("melody", 0, p * 2, 60 + p, 2, 80) for p in range(8)]
-    events += [NoteEvent("piano", 0, 0, 48, 16, 70)]
+    events += [NoteEvent("accompaniment", 0, 0, 48, 16, 70)]
     ids, mask = tokenizer.encode_song(
-        events, condition_tracks=["melody"], target_tracks=["piano"], tempo_bpm=120,
+        events, condition_tracks=["melody"], target_tracks=["accompaniment"], tempo_bpm=120,
     )
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -358,7 +358,7 @@ def test_condition_dropout_prob_one_replaces_condition(tmp_path, cfg, tokenizer)
         "vocab_size": tokenizer.vocab_size,
         "tokenizer_config": asdict(tokenizer.cfg),
         "tokenizer_fingerprint": tokenizer_fingerprint(tokenizer.cfg),
-        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["piano"],
+        "n_shards": 1, "cond_tracks": ["melody"], "target_tracks": ["accompaniment"],
     }), encoding="utf-8")
     (data_dir / "_chunk_index.json").write_text(json.dumps({"t.pt": len(ids)}),
                                                 encoding="utf-8")
@@ -826,7 +826,7 @@ def test_lakh_encode_produces_valid_shard(tmp_path, cfg):
     out_dir = tmp_path / "shards"
     out_dir.mkdir()
 
-    stem = _encode_lakh_one(mid, tokenizer, ["melody"], ["bridge", "piano"], out_dir)
+    stem = _encode_lakh_one(mid, tokenizer, ["melody"], ["accompaniment"], out_dir)
     assert stem is not None, "encode should succeed for a valid 2-track MIDI"
     assert (out_dir / f"{stem}.pt").exists()
 
@@ -839,7 +839,7 @@ def test_lakh_encode_produces_valid_shard(tmp_path, cfg):
     assert mask.sum().item() >= 8, "too few target tokens"
 
     # write_meta incremental path
-    write_meta(out_dir, tokenizer, ["melody"], ["bridge", "piano"],
+    write_meta(out_dir, tokenizer, ["melody"], ["accompaniment"],
                new_shard_names=[stem])
     import json
     meta = json.loads((out_dir / "_dataset_meta.json").read_text())

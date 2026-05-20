@@ -20,8 +20,8 @@ from jam_transformer.tokenizer import NoteEvent
 # "piano" so generic MIDI files can be loaded as a single-target song.
 _POP909_NAME_MAP: Dict[str, str] = {
     "MELODY": "melody",
-    "BRIDGE": "bridge",
-    "PIANO":  "piano",
+    "BRIDGE": "accompaniment",
+    "PIANO":  "accompaniment",
     "LEAD":   "melody",
     "VOCAL":  "melody",
 }
@@ -39,7 +39,7 @@ def midi_to_events(
     """Read a MIDI file into NoteEvents quantized at the tokenizer resolution.
 
     Returns (events, tempo_bpm). Unknown instrument names map to the last
-    configured track ("piano" by default) so non-POP909 MIDIs still load."""
+    configured track ("accompaniment" by default) so non-POP909 MIDIs still load."""
     name_map = {**_POP909_NAME_MAP, **(track_name_override or {})}
     midi = miditoolkit.MidiFile(str(path))
     tpb = midi.ticks_per_beat
@@ -72,9 +72,8 @@ def midi_to_events(
 
 
 _DEFAULT_PROGRAMS: Dict[str, int] = {
-    "melody": 40,   # violin
-    "bridge": 25,   # acoustic guitar (steel)
-    "piano":  0,    # acoustic grand
+    "melody":        40,   # violin
+    "accompaniment":  0,   # acoustic grand piano
 }
 
 

@@ -39,7 +39,7 @@ def _build_tiny_dataset(tmp_path: Path, n_songs: int = 6):
         ids, mask = tokenizer.encode_song(
             events,
             condition_tracks=["melody"],
-            target_tracks=["bridge", "piano"],
+            target_tracks=["accompaniment"],
             tempo_bpm=tempo,
             key_root=key_root,
             key_mode=key_mode,
@@ -63,7 +63,7 @@ def _build_tiny_dataset(tmp_path: Path, n_songs: int = 6):
             "tokenizer_fingerprint": tokenizer_fingerprint(tokenizer.cfg),
             "n_shards": n_songs,
             "cond_tracks": ["melody"],
-            "target_tracks": ["bridge", "piano"],
+            "target_tracks": ["accompaniment"],
         }, indent=2),
         encoding="utf-8",
     )

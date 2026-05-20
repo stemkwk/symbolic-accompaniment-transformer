@@ -347,7 +347,7 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="JAM Transformer", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
             "# 🎵 JAM Transformer\n"
-            "멜로디를 입력하면 AI가 반주(piano)를 생성합니다.\n\n"
+            "멜로디를 입력하면 AI가 반주(accompaniment)를 생성합니다.\n\n"
             "**단순 생성**: 파일 또는 마이크 입력 → 반주 출력  \n"
             "**루프 스테이션**: 짧은 악절을 녹음하면 처리하는 동안 루프를 계속 연주하세요 — 완료 후 반주 레이어를 추가합니다."
         )

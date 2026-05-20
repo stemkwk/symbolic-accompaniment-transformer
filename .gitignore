@@ -68,6 +68,10 @@ soundfonts/*
 jam_tx_bundle.*
 jam_light_assets.zip
 jam_assets_bundle.zip
+jam_checkpoints.zip
+jam_data_processed.zip
+jam_soundfonts.zip
+docker-entrypoint.sh
 
 # ==========================================
 # 6. Python 캐시 및 빌드 파일 (Python Caches & Builds)
