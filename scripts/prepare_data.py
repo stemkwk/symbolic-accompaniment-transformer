@@ -666,9 +666,20 @@ def _lakh_track_events(
     pr = max(hi_p - lo_p, 1.0)
     dr = max(hi_d - lo_d, 1.0)
 
+    # Mono-dominant scoring: mono_rate is the strongest melody discriminator
+    # (validated against POP909 GT: mono-dominant 94.6% vs pitch-balanced 66.9%).
+    # Weights: mono_rate 0.80 >> pitch 0.10, density 0.05, GM hint 0.05.
+    #
+    # TODO(future): consider replacing this heuristic with midi-miner
+    # (https://github.com/ruiguo-bio/midi-miner), a RandomForest classifier
+    # trained on diverse LMD data. It achieves 95.8% on POP909 and generalises
+    # better across genres. Integration cost: ~2-3 h full reprocess + code wiring
+    # in _lakh_track_events / _encode_lakh_one. Accuracy gain over mono-dominant
+    # is ~1.2 pp — likely absorbed by NN training noise, but worth revisiting if
+    # melody-identification quality becomes a bottleneck.
     def _score(idx):
-        return (0.40 * (mps[idx]-lo_p)/pr + 0.40 * mrs[idx]
-                + 0.15 * (1-(mds[idx]-lo_d)/dr)
+        return (0.10 * (mps[idx]-lo_p)/pr + 0.80 * mrs[idx]
+                + 0.05 * (1-(mds[idx]-lo_d)/dr)
                 + 0.05 * (1 if melodic[idx].program in _GM_MELODY_HINT_PROGRAMS else 0))
 
     ranked   = sorted(range(len(melodic)), key=_score, reverse=True)

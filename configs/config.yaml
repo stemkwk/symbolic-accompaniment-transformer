@@ -138,7 +138,10 @@ training:
   polyphony_loss_boost: 2.0
   # 폴리포니가 풍부한 chunk를 더 자주 샘플링 (WeightedRandomSampler).
   # weight = (poly_score + 0.01) ** alpha. 0.0 = 균등.
-  polyphony_sample_weight_alpha: 0.5
+  # DISABLED: redundant with polyphony_loss_boost (both push polyphony) and
+  # distorts the data distribution (downweights sparse-texture songs). Keeping a
+  # single targeted training-time lever (loss_boost) for clean attribution.
+  polyphony_sample_weight_alpha: 0.0
   # val batch_size — validation has no backward pass so activations need not
   # be retained.  0 = auto (2× train batch_size), halving val epoch time
   # and reducing peak VRAM spikes during evaluation.
@@ -194,7 +197,10 @@ inference:
   # Polyphony hack: after a complete (CHROMA/OCTAVE/DUR/VEL) quad, subtract this
   # value from BAR/POS logits so the model is biased toward stacking another
   # note at the same position (= chord) instead of advancing. 0.0 disables.
-  structural_suppression: 1.5
+  # DISABLED by default: inference-time band-aid that forces stacking the model
+  # may not have learned. Train with polyphony_loss_boost first; only enable this
+  # (no retrain needed) if generated accompaniment is observed to be too sparse.
+  structural_suppression: 0.0
   # Render generated MIDI to WAV at end of inference (requires pyfluidsynth).
   render_audio: false
   soundfont: ""           # path to .sf2; empty = auto-detect system soundfonts

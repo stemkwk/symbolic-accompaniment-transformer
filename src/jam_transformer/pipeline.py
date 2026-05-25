@@ -158,7 +158,7 @@ def generate_accompaniment(
     temperature = temperature if temperature is not None else icfg.temperature
     top_k      = top_k      if top_k      is not None else icfg.top_k
     top_p      = top_p      if top_p      is not None else icfg.top_p
-    max_new    = max_new_tokens if max_new_tokens is not None else icfg.max_new_tokens
+    _max_new_override = max_new_tokens   # finalised below once song length is known
     struct_supp = (structural_suppression if structural_suppression is not None
                    else getattr(icfg, "structural_suppression", 0.0))
 
@@ -210,9 +210,35 @@ def generate_accompaniment(
     header_ids.append(tokenizer.tid(f"TEMPO_{tokenizer.tempo_bin(tempo)}"))  # type: ignore[attr-defined]
 
     model_max = getattr(cfg.model, "max_seq_len", 4096)
+
+    # Arbitrary-length default: when the caller does not cap generation, the
+    # budget scales with the melody so even long songs are fully accompanied.
+    # An explicit max_new_tokens still caps generation.
+    if _max_new_override is not None:
+        max_new = _max_new_override
+    else:
+        max_new = max(icfg.max_new_tokens, 64 * (last_bar - first_bar + 1))
+
+    # Sliding-window context bound. The model was TRAINED on sequences up to
+    # tokenizer.max_seq_len; to generate arbitrarily long songs without pushing
+    # RoPE past its trained range, we keep the KV cache inside this window and
+    # rebuild it from the BOS/KEY/TEMPO header anchor + the most-recent tokens
+    # whenever it grows past the bound. Long-range memory is intentionally
+    # dropped — bar-block harmony is local, so only recent context matters.
+    # Reserve RoPE headroom: a slide fires only AFTER the cache exceeds
+    # ctx_window, so the cache can momentarily overshoot by up to one forced
+    # block before being rebuilt. Keep ctx_window below the RoPE buffer
+    # (model_max) by that headroom so the overshoot never indexes past the
+    # precomputed cos/sin tables.
+    _rope_headroom = min(512, model_max // 4)
+    ctx_window = min(int(getattr(cfg.tokenizer, "max_seq_len", model_max)),
+                     max(1, model_max - _rope_headroom))
+    _ctx_margin = max(64, ctx_window // 8)
+    ctx_keep = max(1, ctx_window - len(header_ids) - _ctx_margin)
+
     logger.info(
         f"Bar-block generation | tempo={tempo:.1f} BPM | lookahead={N} bar(s) | "
-        f"bars {first_bar}..{last_bar} | max_new={max_new}"
+        f"bars {first_bar}..{last_bar} | max_new={max_new} | ctx_window={ctx_window}"
     )
 
     # ------------------------------------------------------------------ #
@@ -247,15 +273,26 @@ def generate_accompaniment(
     generated_count = 0
     done = False
 
+    @torch.no_grad()
+    def _maybe_slide(last_logits, kv_caches):
+        """Keep the KV cache within the trained context window.
+
+        When the cache grows past ``ctx_window`` we rebuild it from the header
+        anchor (BOS/KEY/TEMPO) plus the most-recent ``ctx_keep`` tokens via a
+        single fresh forward. This re-rotates every kept key at in-range RoPE
+        positions (naively truncating pre-rotated keys would corrupt relative
+        positions) and yields the next-token logits for the latest token.
+        """
+        if kv_caches is None or kv_caches[0][0].shape[2] <= ctx_window:
+            return last_logits, kv_caches
+        window_ids = header_ids + all_ids[-ctx_keep:]
+        return _step(window_ids, None)
+
     # ------------------------------------------------------------------ #
     # 6. Bar-block generation loop
     # ------------------------------------------------------------------ #
     bar = first_bar
     while bar <= last_bar and not done:
-        if len(all_ids) >= model_max:
-            logger.warning("Reached model max_seq_len — stopping early.")
-            break
-
         # bars belonging to the current N-aligned block (capped at last_bar)
         block_idx = bar // N
         bars_in_block: list[int] = []
@@ -274,8 +311,9 @@ def generate_accompaniment(
                 for e in sorted(mel_by_bar[bb][pos], key=lambda e: e.pitch):
                     forced.extend(_note_to_tokens(e, tokenizer, kr))
         forced.append(sep_id)
-        last_logits, kv_caches = _step(forced, kv_caches)
         all_ids.extend(forced)
+        last_logits, kv_caches = _step(forced, kv_caches)
+        last_logits, kv_caches = _maybe_slide(last_logits, kv_caches)
 
         # ---- Generate accompaniment for this block ----------------------
         # The acc section spans len(bars_in_block) bars → (M-1) internal BARs
@@ -304,6 +342,7 @@ def generate_accompaniment(
                     all_ids.append(next_id)
                     generated_count += 1
                     last_logits, kv_caches = _step([next_id], kv_caches)
+                    last_logits, kv_caches = _maybe_slide(last_logits, kv_caches)
                     continue
                 # block's accompaniment finished → discard this BAR, next block
                 break
@@ -315,6 +354,7 @@ def generate_accompaniment(
             all_ids.append(next_id)
             generated_count += 1
             last_logits, kv_caches = _step([next_id], kv_caches)
+            last_logits, kv_caches = _maybe_slide(last_logits, kv_caches)
             if generated_count >= max_new:
                 done = True
                 break
