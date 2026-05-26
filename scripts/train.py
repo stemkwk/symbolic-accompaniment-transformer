@@ -138,9 +138,11 @@ def _dry_run(model, train_loader, steps: int, precision: str,
     use_amp = precision.startswith(("16", "bf16")) and device.type == "cuda"
     amp_dtype = torch.bfloat16 if "bf16" in precision else torch.float16
 
-    # Warmup
+    # Warmup — capture initial loss from step 0 as a sanity check.
+    # Expected range: ln(vocab_size) ± 0.3  (random-init cross-entropy).
     it = iter(train_loader)
-    for _ in range(min(3, steps)):
+    first_loss: float | None = None
+    for i in range(min(3, steps)):
         batch = next(it)
         batch = [b.to(device) for b in batch]
         opt.zero_grad()
@@ -149,6 +151,8 @@ def _dry_run(model, train_loader, steps: int, precision: str,
                 loss, _ = model._compute_loss(batch)
         else:
             loss, _ = model._compute_loss(batch)
+        if i == 0:
+            first_loss = loss.item()
         loss.backward()
         opt.step()
 
@@ -180,6 +184,14 @@ def _dry_run(model, train_loader, steps: int, precision: str,
     steps_per_epoch = len(train_loader)
     epoch_sec = sec_per_step * steps_per_epoch
     logger.info("───── DRY RUN ─────")
+    if first_loss is not None:
+        import math
+        vocab_size = getattr(model, "vocab_size", None)
+        expected = math.log(vocab_size) if vocab_size else None
+        note = (f"  OK near ln({vocab_size})={expected:.2f}"
+                if expected and abs(first_loss - expected) < 0.5
+                else f"  WARN expected ~{expected:.2f}" if expected else "")
+        logger.info(f"  initial loss: {first_loss:.4f}{note}")
     logger.info(f"  measured: {n} steps in {dt:.2f}s  →  {sec_per_step*1000:.1f} ms/step")
     logger.info(f"  steps/epoch : {steps_per_epoch}")
     logger.info(f"  est epoch   : {epoch_sec:.1f} s ({epoch_sec/60:.2f} min)")
