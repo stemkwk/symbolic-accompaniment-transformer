@@ -39,12 +39,16 @@ _SOURCE_EXCLUDES = {
     # build / cache artefacts
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".venv", "venv", ".git",
+    # virtual environments (any name pattern)
+    ".mm_env", "env", "ENV", "active_env",
     # training outputs (generated on the server, not needed there)
     "checkpoints", "logs", "output", "lightning_logs", "sweep_results",
     # artefacts pulled *from* the server — never re-upload back
     "pulled_checkpoints", "pulled_logs",
     # data: raw MIDIs excluded; processed tokens added separately below
     "data",
+    # local-only: inspection results, pre-built bundles, soundfonts
+    "inspection", "bundles", "soundfonts",
     # misc local-only directories
     "tools", "notebooks",
 }
@@ -58,12 +62,14 @@ _SOURCE_EXCLUDE_FILES = {
 # File extensions that are packaging artefacts or too large / useless on server.
 # This prevents bundling the bundle itself or previously fetched checkpoints.
 _SOURCE_EXCLUDE_SUFFIXES = {
-    # packaging artefacts (jam_tx_bundle.tgz etc.)
-    ".tgz", ".tar", ".zst", ".bz2", ".xz",
+    # packaging artefacts (jam_tx_bundle.tgz, jam_*.zip etc.)
+    ".tgz", ".tar", ".zst", ".bz2", ".xz", ".zip",
     # checksum sidecars
     ".sha256",
     # compiled bytecode (belt-and-suspenders — pycache dir is already excluded)
     ".pyc", ".pyo",
+    # audio / MIDI outputs that don't belong on a training server
+    ".wav", ".mp3", ".sf2",
 }
 
 
