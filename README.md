@@ -40,19 +40,21 @@ graph TD
 생성된 토큰 시퀀스는 다음과 같이 고도로 정형화된 문법 구조를 가집니다:
 
 ```
-<BOS>  KEY_C_maj  TEMPO_8  
-  TRACK_melody  
-    BAR  [SCALE_DEGREE_0  QUALITY_maj]  POS_0  CHROMA_0  OCTAVE_5  DUR_4  VEL_24  ...
-    BAR  [CHORD_N]  POS_4  CHROMA_4  OCTAVE_5  DUR_4  VEL_20  ...
-  <SEP>  
-  TRACK_piano  
-    BAR  [SCALE_DEGREE_0  QUALITY_maj]  POS_0  CHROMA_0  OCTAVE_3  DUR_8  VEL_18  
-    POS_0  CHROMA_4  OCTAVE_3  DUR_8  VEL_16  # 다성부 화음 적층 (Polyphony)
+<BOS>  KEY_C_maj  TEMPO_8
+  BAR  [SCALE_DEGREE_0  QUALITY_maj]                              ← 마디 공유 화음 (두 트랙 동일 적용)
+  POS_0
+    TRACK_melody        CHROMA_0  OCTAVE_5  DUR_4  VEL_24        ← 조건 (condition, 손실 제외)
+    TRACK_accompaniment CHROMA_0  OCTAVE_3  DUR_8  VEL_18        ← 타깃 (target, 손실 적용)
+    TRACK_accompaniment CHROMA_4  OCTAVE_3  DUR_8  VEL_16        ← 다성부 화음 적층 (Polyphony)
+  POS_8
+    TRACK_melody        CHROMA_4  OCTAVE_5  DUR_4  VEL_20  ...
     ...
+  BAR  [CHORD_N]  ...
 <EOS>
 ```
 * **KEY**: 전역 조성 정보(24개 variant)를 첫머리에 제공하여 화성적 기준점을 제공합니다.
 * **CHORD_N**: 코드가 없거나 식별되지 않는 마디를 위한 플레이스홀더 토큰입니다.
+* **Temporal Interleaving**: 멜로디와 반주 토큰을 `<SEP>` 없이 POS 단위로 인터리빙합니다. 각 박자에서 `TRACK_melody` 음표가 먼저 나오고 `TRACK_accompaniment` 음표가 바로 뒤를 따르므로, 모델은 반주를 예측할 때 동일 시간에 발생하는 멜로디 맥락에 인과적으로 직접 접근할 수 있습니다.
 * **relative Pitch**: 음높이를 절대값이 아닌 key-relative `CHROMA`와 절대 옥타브 `OCTAVE`로 쪼개어, 조옮김 시 `CHROMA`와 `SCALE_DEGREE`는 완벽히 불변으로 유지하고 `KEY`와 `OCTAVE`만 미세 조정하도록 데이터 증강 계약(Contract)을 보장합니다.
 
 ---
@@ -69,21 +71,28 @@ $$\text{If } t_{\text{last}} \in \mathbf{V}_{\text{velocity}}:$$
 $$\mathbf{L}_{\text{next}}[\mathbf{I}_{\text{struct}}] \leftarrow \mathbf{L}_{\text{next}}[\mathbf{I}_{\text{struct}}] - \gamma_{\text{suppress}}$$
 
 * **작동 원리**: 마지막 샘플링된 토큰 $t_{\text{last}}$가 벨로시티 토큰 집합 $\mathbf{V}_{\text{velocity}}$ (`VEL_*` 계열)에 속할 때, 다음 토큰 예측 Logits인 $\mathbf{L}_{\text{next}}$에서 시간/구조 관련 토큰 인덱스 $\mathbf{I}_{\text{struct}}$ (`BAR`, `POS_*`, `TEMPO_*`, `TRACK_*` 등)의 값을 일정한 벌점 파라미터 $\gamma_{\text{suppress}}$ (설정값 `structural_suppression`)만큼 차감합니다.
-* **기본값**: `structural_suppression: 0.0` (비활성). 학습 시 `polyphony_loss_boost`로 다성부를 충분히 학습한 모델에서는 추론 시 이 보정이 필요 없습니다. 모델이 단성률로 수렴하는 경향이 관찰될 경우 1.0~2.0으로 활성화하세요.
+* **기본값**: `structural_suppression: 0.0` (비활성). 아래의 `polyphony_loss_boost`로 다성부를 충분히 학습한 모델에서는 추론 시 이 보정이 필요 없습니다. 모델이 단선율로 수렴하는 경향이 관찰될 경우 1.0~2.0으로 활성화하세요.
 * **효과**: 모델이 시간 축을 진행시키는 것을 인위적으로 억제하여, 동일한 POS 위치에 여러 음표(화음)를 겹쳐서 적층 생성하도록 유도합니다. 이 수치는 CLI나 YAML 설정을 통해 결정론적으로 조절이 가능합니다.
+
+#### 🎸 학습 시 다성부 강화 (Polyphony Loss Boost)
+추론 시 패널티에만 의존하는 대신, **학습 단계에서 직접 다성부 생성을 강화**합니다.
+* `polyphony_loss_boost: 2.0` — 화음 위치의 PITCH/VEL 토큰에 cross-entropy 손실 가중치 2배를 적용합니다.
+* 모델이 스스로 화음을 쌓는 것을 학습하므로 추론 시 `structural_suppression`이 필요하지 않습니다. `structural_suppression`은 만약 생성물이 여전히 단선율로 관찰될 때의 최후 수단으로만 남겨 둡니다.
 
 ---
 
 ### C. 분류기 없는 가이드라인 (Classifier-Free Guidance, CFG)
-멜로디 조건에 모델이 얼마나 밀착하여 음악을 생성할지 조절할 수 있도록 **CFG**를 도입했습니다.
-* **학습 시**: `condition_dropout_prob: 0.05` 확률로 멜로디 조건 영역(`<BOS>`와 `<SEP>` 사이)을 패딩 토큰(`<PAD>`)으로 대체하여 무조건부 배포 $P(\text{accom})$와 조건부 배포 $P(\text{accom} \mid \text{melody})$를 동시에 학습합니다. (5% 드롭아웃: 멜로디가 짧은 인트로/아웃트로 구간에서도 생성이 견고하도록 정상적인 고커버리지 곡에서만 적용)
-* **추론 시**: 두 갈래의 예측값(Logits)을 결합 가중치 $w$로 선형 결합하여 최종 확률 분포를 제어합니다.
+
+> **[현재 브랜치 제약]** Temporal Interleaving 포맷에서는 CFG 추론 가중치($w > 1.0$)가 지원되지 않습니다. `condition_dropout_prob`은 추론 견고성을 위한 학습 기법으로만 사용됩니다. 자세한 설계 이유는 [analysis/branch_design_changes.md](analysis/branch_design_changes.md)를 참고하세요.
+
+* **학습 시**: `condition_dropout_prob: 0.05` 확률로 멜로디 조건 토큰을 패딩(`<PAD>`)으로 교체하여 무조건부 배포 $P(\text{accom})$와 조건부 배포 $P(\text{accom} \mid \text{melody})$를 동시에 학습합니다. 멜로디가 없는 인트로/아웃트로 구간에서도 견고하게 생성이 가능해집니다.
+* **추론 시 (설계 참고용)**: 두 갈래의 예측값(Logits)을 결합 가중치 $w$로 선형 결합하는 방식입니다.
 
 $$\mathbf{L}_{\text{cfg}} = \mathbf{L}_{\text{uncond}} + w \times (\mathbf{L}_{\text{cond}} - \mathbf{L}_{\text{uncond}})$$
 
-* **가이드라인 강도($w$) 영향**:
-  * `w = 0.0` 또는 `1.0`: 기본 조건부 생성 (기본값).
-  * `w > 1.0` (주로 1.5~3.0): 멜로디의 화성과 박자 구조에 피아노 반주가 훨씬 엄격하고 조화롭게 밀착하여 생성됩니다.
+* **가이드라인 강도($w$) 영향** (SEP-분리형 포맷에서 유효):
+  * `w = 0.0` 또는 `1.0`: 기본 조건부 생성.
+  * `w > 1.0` (주로 1.5~3.0): 멜로디 화성·박자 구조에 반주가 엄격하게 밀착하여 생성됩니다.
 
 ---
 
@@ -154,8 +163,11 @@ project_transformer/
 │   ├── evaluation_metrics_strategy.md # 학술용 정량/정성 평가 수립 보고서
 │   ├── differentiation_analysis.md # 기존 프로젝트 대비 차별점/개선점/한계 분석 보고서
 │   ├── structural_limitations.md   # 구조적 한계 및 개선 결과 보고서
-│   ├── performance_optimization.md # 성능 병목 분석 및 최적화 보고서
-│   └── archive/                # 완료 또는 기각된 분석 문서 보관
+│   ├── performance_optimization.md     # 성능 병목 분석 및 최적화 보고서
+│   ├── pretraining_sanity_check.md     # 학습 전 자가 진단 프로토콜 및 검증 체크리스트
+│   ├── comprehensive_review.md         # 종합 아키텍처 감사 및 전체 개선 현황판
+│   ├── branch_design_changes.md        # main 브랜치 대비 설계 변경 비교 분석
+│   └── archive/                        # 완료 또는 기각된 분석 문서 보관
 ├── docker-compose.yaml         # 서버 환경 간편 배포 컴포즈 파일
 ├── pyproject.toml              # 패키지 의존성 및 setuptools 메타데이터 정의
 └── requirements.lock           # 고정된 의존성 락파일
@@ -343,6 +355,7 @@ class MySuperTokenizer(BaseTokenizer):
 * **회귀 붕괴 극복**: 기존 cGAN 스펙트로그램 직접 매핑 모델의 One-to-Many 모호성으로 인한 흐릿한(blurry) 평균치 수렴 붕괴를 극복하고, 심볼릭 토큰 크로스 엔트로피 분류 체계로 선명하고 정확한 화성을 작곡합니다.
 * **초경량 최적화**: 수억~수십억 파라미터를 소모하는 EnCodec 기반 오디오 토큰 모델(MusicGen 등)과 달리, 단 **38M 파라미터**의 정제된 Transformer 아키텍처를 구현하고 RoPE 및 Gradient Checkpointing을 결합하여 무료 Colab GPU(T4) 혹은 저사양 로컬 환경에서 단 2-3시간 만에 고속 학습 수렴이 가능하게 만들었습니다.
 * **토큰 무결성 검사**: 전처리 시 `_dataset_meta.json`에 기록된 토크나이저 해시값(Fingerprint)을 로딩 즉시 대조함으로써, 설정 drift로 인한 학습 오류 및 CUDA 충돌 문제를 100% 미연에 차단합니다.
+* **소스 균형 샘플링 (Source-Balanced Sampling)**: 자연 분포(Lakh 90.3% / Slakh 4.7% / POP909 4.9%)를 목표 분포(Lakh 55% / Slakh 40% / POP909 5%)로 재조정하는 `WeightedRandomSampler`를 도입했습니다. 전문 편곡 품질의 Slakh를 자연 비율 대비 **8.5배 오버샘플링**하여 화음 품질을 향상시키고, 중국 팝 장르 편향이 있는 POP909의 비율은 자연 비율로 고정합니다.
 
 ### C. 냉정한 한계점 (Limitations)
 * **음원 합성 품질의 사운드폰트 의존성**: 물리적 오디오를 생성하지 않고 작곡 기호(MIDI)를 출력하기 때문에, 최종 WAV의 음질 및 Realism이 로드된 외부 사운드폰트(`.sf2`)의 음색에 절대적으로 종속됩니다.
@@ -351,6 +364,26 @@ class MySuperTokenizer(BaseTokenizer):
 
 > [!NOTE]
 > 더욱 자세한 학술적 심층 분석과 정량 지표 대조표는 [analysis/differentiation_analysis.md](file:///c:/Users/hojun/Documents/대학교%20자료/3학년%201학기(2026-1)/기학지/과제/project_transformer/analysis/differentiation_analysis.md) 보고서 전문을 참조해 주시기 바랍니다.
+
+---
+
+## 🔀 9. main 브랜치 대비 핵심 설계 변경 (Branch Design Changes)
+
+`feat/single-stream-accompaniment` 브랜치는 main 브랜치에서 다음과 같은 구조적 설계 변경을 적용했습니다.  
+상세한 설계 의사결정 근거와 트레이드오프 분석은 [analysis/branch_design_changes.md](analysis/branch_design_changes.md)에 수록되어 있습니다.
+
+| 구분 | main 브랜치 | 현재 브랜치 |
+| :--- | :--- | :--- |
+| **트랙 구조** | 3트랙: melody + bridge + piano | 2트랙: melody + accompaniment |
+| **시퀀스 포맷** | SEP-분리형 (melody 블록 → `<SEP>` → piano 블록) | Temporal Interleaving (POS 단위 인터리빙, SEP 미발행) |
+| **어휘 크기** | 174 토큰 (TRACK_bridge 포함) | 173 토큰 |
+| **최대 시퀀스 길이** | 2048 토큰 | 2560 토큰 |
+| **다성부 제어 전략** | `structural_suppression: 1.5` (추론 시 항상 활성) | `polyphony_loss_boost: 2.0` (학습으로 근본 해결); `structural_suppression: 0.0` (비활성) |
+| **CFG 추론** | 지원 (`condition_dropout_prob: 0.15`) | 인터리빙 포맷에서 미지원; dropout은 견고성 학습용 (`0.05`) |
+| **데이터 샘플링** | 균등 (자연 분포) | `WeightedRandomSampler`: Slakh ×8.5 / Lakh ×0.61 / POP909 ×1.0 |
+| **Train/Val 분할** | 스트라이드 기반 인덱스 | SHA-256 곡 단위 분할 (`val_ratio: 0.2`, 데이터 누수 차단) |
+| **Checkpoint 주기** | 100 steps (I/O 병목) | 1000 steps |
+| **멜로디 밀도 필터** | 없음 | `min_melody_coverage: 0.20` (저커버리지 곡 자동 제거) |
 
 ---
 **최종 업데이트:** 2026-05-26  
