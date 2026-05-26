@@ -160,8 +160,12 @@ def main() -> None:
     # Resolve output path and extension
     ext_map = {"gz": ".tgz", "zst": ".tar.zst", "none": ".tar"}
     default_stem = "jam_tx_bundle"
-    out = Path(args.out).resolve() if args.out else \
-        (root / (default_stem + ext_map[args.compress]))
+    if args.out:
+        out = Path(args.out).resolve()
+    else:
+        bundles_dir = root / "bundles"
+        bundles_dir.mkdir(exist_ok=True)
+        out = bundles_dir / (default_stem + ext_map[args.compress])
 
     # Resolve data dir
     data_dir: Path | None = None
