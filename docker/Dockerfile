@@ -46,6 +46,11 @@ COPY scripts /app/scripts
 COPY tests /app/tests
 RUN pip install -e .
 
-# Sensible defaults — override at `docker run` time as needed.
+# Runtime entrypoint: handles WSL2 libcuda.so path on Docker Desktop.
+# On native Linux servers the script is a no-op (symlink already exists).
+COPY docker/docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 ENV PYTHONIOENCODING=utf-8
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "scripts/train.py", "--config", "configs/config.yaml"]
