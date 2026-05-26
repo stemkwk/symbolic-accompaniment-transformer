@@ -1,5 +1,5 @@
-# CUDA 12.4 base — matches the training server environment (PyTorch + CUDA 12.4).
-# Compatible with host drivers 12.4+ (local RTX 3050 uses 12.7 driver → ok).
+# CUDA 12.4 base — matches the training server environment.
+# PyTorch 2.5.1+cu124. Compatible with host drivers 12.4+ (12.7 driver → ok).
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -27,7 +27,7 @@ WORKDIR /app
 # Layer 1: heavy frozen deps. Touch `requirements.lock` to invalidate.
 COPY requirements.lock /app/requirements.lock
 RUN pip install --index-url https://download.pytorch.org/whl/cu124 \
-        torch==2.4.1 torchaudio==2.4.1 \
+        torch==2.5.1 torchaudio==2.5.1 \
     && pip install -r /app/requirements.lock
 
 # Triton's gcc link step needs `-lcuda` to resolve, but the nvidia/cuda runtime
