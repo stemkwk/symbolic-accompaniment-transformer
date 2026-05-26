@@ -22,10 +22,6 @@ services:
       # Triton JIT compile parallelism. 1 = safe default for all VRAM tiers.
       # Raise to 4-8 on 24GB+ machines for faster first-step kernel compilation.
       - TORCHINDUCTOR_COMPILE_THREADS=1
-      # Emergency escape hatch: set TORCHDYNAMO_DISABLE=1 in .env to fall back
-      # to eager mode if torch.compile crashes (e.g. WSL2 Triton SIGSEGV).
-      # Cost: ~20-30% slower. Leave unset (or empty) for normal compile.
-      - TORCHDYNAMO_DISABLE=${TORCHDYNAMO_DISABLE:-}
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints

@@ -51,16 +51,15 @@ model:
   use_rope: true
   # Tie input embedding and output projection weights.
   tie_weights: true
-  # torch.compile (PyTorch 2.x). Big speedup on Ampere+ GPUs, but adds 1-2 min
-  # compile overhead and occasionally fails on exotic shapes. Keep OFF by
-  # default; flip on once you've confirmed the dry-run config compiles cleanly.
-  # torch.compile: 20-30% speedup on Ampere+ (RTX 3090/4090, A100, H100).
-  # Adds 1-2 min compile overhead on first run; fully amortised over 200 epochs.
-  # Keep false on Windows / Colab T4 (Turing GPU, compile is flakey).
   # RoPE buffer length — must be >= tokenizer.max_seq_len (with headroom for
   # generation past the prompt length). 4096 covers 2048-prompt + 2048-generate.
   max_seq_len: 4096
-  compile: true
+  # torch.compile: 20-30% speedup on Ampere+ (RTX 3090/4090, A100, H100).
+  # Adds 1-2 min compile overhead on first run; fully amortised over 200 epochs.
+  # Default: false (safe everywhere). Enable on native Linux servers only:
+  #   --set model.compile=true
+  # Do NOT enable on Windows + Docker Desktop (WSL2 Triton SIGSEGV).
+  compile: false
   compile_mode: "default"            # reduce-overhead uses CUDA Graphs → OOM on 24GB w/ GC
   # Recompute activations during backward to halve peak VRAM (~30% slower).
   # Required on 24GB GPUs at bs=64, seq=2048, n_layers=12. Set false only if

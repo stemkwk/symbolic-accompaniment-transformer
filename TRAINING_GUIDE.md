@@ -151,26 +151,6 @@ RUNPOD_API_KEY=여기에_발급받은_키_붙여넣기
 
 ---
 
-### TORCHDYNAMO_DISABLE (Windows + Docker Desktop 필수)
-
-**Windows에서 Docker Desktop(WSL2)으로 학습하는 경우 반드시 설정합니다.**
-
-`torch.compile`의 Triton JIT 컴파일러가 WSL2 Docker 환경에서 구조적으로 충돌(SIGSEGV)합니다.  
-아래 줄의 주석(`#`)을 제거하세요:
-
-```
-# 변경 전 (주석 처리됨)
-# TORCHDYNAMO_DISABLE=1
-
-# 변경 후 (주석 제거)
-TORCHDYNAMO_DISABLE=1
-```
-
-> native Linux 서버(RunPod 등)에서 학습하는 경우 이 줄을 주석 상태로 두거나 삭제하면  
-> `torch.compile`이 활성화되어 20~30% 속도 향상을 얻을 수 있습니다.
-
----
-
 저장 후 메모장을 닫으세요. `.env` 파일은 git에서 제외되어 있으므로 커밋될 걱정 없이 실제 키를 적어두면 됩니다.
 
 ---
@@ -276,8 +256,7 @@ docker compose run --rm -e WANDB_DISABLED=true train `
   --set training.csv_logger_enabled=false
 ```
 
-> `torch.compile` 충돌(segfault)이 걱정된다면 4단계에서 `.env`에 `TORCHDYNAMO_DISABLE=1`을 설정했는지 확인하세요.  
-> Windows + Docker Desktop 환경에서는 이것으로 충분히 방지됩니다.
+> `torch.compile`은 기본값이 `false`이므로 Windows + Docker Desktop에서도 안전하게 실행됩니다.
 
 아래처럼 마지막 줄이 나오면 정상입니다:
 
@@ -313,39 +292,39 @@ docker compose run --rm -e WANDB_DISABLED=true train `
 
 ## 11. 학습 시작
 
-### W&B 모니터링을 켜고 학습 (WANDB_API_KEY 설정한 경우)
+### Windows + Docker Desktop (4060 Ti / 4070 Ti Super)
+
+```powershell
+docker compose run --rm train `
+  python scripts/train.py `
+  --data_dir data/processed
+```
+
+이어서 학습할 때:
 
 ```powershell
 docker compose run --rm train `
   python scripts/train.py `
   --data_dir data/processed `
-  --resume checkpoints/last_step.ckpt `
-  --set training.accumulate_grad_batches=2
+  --resume checkpoints/last_step.ckpt
 ```
 
-### W&B 없이 학습 (API 키를 설정하지 않은 경우)
+### native Linux 서버 (RunPod / Vast.ai 등) — torch.compile 활성화
+
+Linux 서버에서는 `torch.compile`을 켜면 20~30% 속도 향상을 얻을 수 있습니다.
 
 ```powershell
-docker compose run --rm -e WANDB_DISABLED=true train `
+docker compose run --rm train `
   python scripts/train.py `
   --data_dir data/processed `
-  --resume checkpoints/last_step.ckpt `
-  --set training.accumulate_grad_batches=2
-```
-
-### 처음부터 새로 시작
-
-```powershell
-docker compose run --rm -e WANDB_DISABLED=true train `
-  python scripts/train.py `
-  --data_dir data/processed `
-  --set training.accumulate_grad_batches=2
+  --set model.compile=true
 ```
 
 | 옵션 | 설명 |
 |---|---|
 | `--resume checkpoints/last_step.ckpt` | 에포크·옵티마이저 상태까지 포함해 이어서 학습 |
-| `--set training.accumulate_grad_batches=2` | 실제 배치 32 × 2회 누적 → effective batch 64 |
+| `--set model.compile=true` | Triton JIT 컴파일 활성화 (native Linux 전용, +20~30%) |
+| `--set training.accumulate_grad_batches=2` | 배치 32 × 2회 누적 → effective batch 64 |
 
 > **last_step.ckpt vs best-epoch=...ckpt**  
 > `last_step.ckpt` → 학습 재개용 / `best-epoch=...ckpt` → 추론(inference)용
@@ -399,7 +378,7 @@ docker compose run --rm -e WANDB_DISABLED=true train `
 |---|---|
 | `docker: command not found` | 컨테이너 안에서 명령을 치고 있음. `exit` 후 PowerShell에서 실행 |
 | `CUDA: False` | Docker Desktop → Settings → Resources → WSL Integration에서 Ubuntu 활성화 확인 |
-| `Segmentation fault` | `.env`에 `TORCHDYNAMO_DISABLE=1` 설정 (4단계 참고). Windows + Docker Desktop 환경에서 발생 |
+| `Segmentation fault` | `torch.compile`이 켜진 상태에서 WSL2 Docker 실행 시 발생. `--set model.compile=false` 추가 (기본값이므로 보통 불필요) |
 | `OOM: CUDA out of memory` | `--set training.batch_size=16 --set training.accumulate_grad_batches=4` 추가 |
 | 5~10분간 아무것도 안 뜸 | 정상. 데이터셋 인덱싱 중. 기다리면 됨 |
 | `No module named ...` | `docker compose build` 재실행 |
