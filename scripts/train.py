@@ -229,17 +229,46 @@ def train(
         base_batch_size=config.training.batch_size,
         base_lr=config.training.learning_rate,
         env_cfg=config.env_scaling,
+        seq_len=config.tokenizer.max_seq_len,
+        n_heads=config.model.n_heads,
     )
-    logger.info(f"env: {opts['env_name']}  |  precision={opts['precision']}")
-    logger.info(
-        f"effective batch_size={opts['batch_size']}  lr={opts['learning_rate']:.6f}  "
-        f"warmup_steps={config.training.warmup_steps}  workers={opts['num_workers']}"
-    )
+
+    # ── Flash-Attention auto grad_accum ──────────────────────────────────
+    # When Flash Attention is unavailable (SM < 8.0, e.g. T4 / Turing),
+    # utils.py reduces batch_size and computes grad_accum to keep the
+    # O(seq²) attention matrix within 15 % of VRAM while preserving the
+    # effective batch size.  The user can still override with
+    #   --set training.accumulate_grad_batches=N
+    auto_accum = opts.get("grad_accum", 1)
+    if auto_accum > 1 and config.training.accumulate_grad_batches == 1:
+        config.training.accumulate_grad_batches = auto_accum
+        logger.info(
+            f"no Flash Attention (SM < 8.0): "
+            f"auto grad_accum={auto_accum}, "
+            f"batch {opts['batch_size'] * auto_accum} → "
+            f"{opts['batch_size']} × {auto_accum} (effective batch unchanged)"
+        )
+
+    # ── Auto val_batch_size ───────────────────────────────────────────────
+    # Default val_batch_size=0 → 2× train batch.  Without Flash Attention
+    # that also OOMs.  Cap it at the (already-reduced) train batch size.
+    if not opts.get("flash_attn_available", True) and config.training.val_batch_size == 0:
+        config.training.val_batch_size = opts["batch_size"]
+        logger.info(f"auto val_batch_size={opts['batch_size']} (no Flash Attention)")
+
     config.training.batch_size = opts["batch_size"]
     config.training.learning_rate = opts["learning_rate"]
     scale = opts.get("batch_scale", 1)
     if scale > 1:
         config.training.warmup_steps = max(1, config.training.warmup_steps // scale)
+
+    logger.info(f"env: {opts['env_name']}  |  precision={opts['precision']}")
+    _eff = opts["batch_size"] * config.training.accumulate_grad_batches
+    logger.info(
+        f"batch_size={opts['batch_size']}  accum={config.training.accumulate_grad_batches}"
+        f"  effective={_eff}  lr={opts['learning_rate']:.6f}"
+        f"  warmup_steps={config.training.warmup_steps}  workers={opts['num_workers']}"
+    )
 
     tokenizer = build_tokenizer(config.tokenizer)
     assert_data_matches_config(data_dir, tokenizer)
