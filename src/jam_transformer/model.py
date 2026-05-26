@@ -122,9 +122,29 @@ class CausalSelfAttention(nn.Module):
             v = torch.cat([v_prev, v], dim=2)
 
         new_cache = (k, v)
+
+        # Build attention mask:
+        #   • Training / first fill (kv_cache is None, T == seq_len): use Flash's
+        #     built-in causal kernel — fastest path.
+        #   • Single-step decode (kv_cache set, T == 1): no mask needed; every
+        #     cached key is visible to the single query.
+        #   • Forced-prefix decode (kv_cache set, T > 1): must apply a
+        #     block-causal mask so query i cannot attend to future query j > i.
+        is_causal = False
+        attn_mask = None
+        if kv_cache is None:
+            is_causal = True
+        elif T > 1:
+            # q[i] (absolute pos T_past+i) may attend to k[j] iff j <= T_past+i.
+            T_past = k.shape[2] - T
+            qi = torch.arange(T, device=x.device).unsqueeze(1)           # (T, 1)
+            kj = torch.arange(T_past + T, device=x.device).unsqueeze(0)  # (1, T_total)
+            attn_mask = (kj <= T_past + qi).unsqueeze(0).unsqueeze(0)    # (1,1,T,T_total) bool
+
         attn = F.scaled_dot_product_attention(
             q, k, v,
-            is_causal=kv_cache is None,                     # full causal at train; cache implies single-step decode
+            attn_mask=attn_mask,
+            is_causal=is_causal,
             dropout_p=self.attn_dropout if self.training else 0.0,
         )
         attn = attn.transpose(1, 2).contiguous().view(B, T, -1)
@@ -359,9 +379,10 @@ class DecoderTransformer(nn.Module):
         if 0.0 < top_p < 1.0:
             sorted_logits, sorted_idx = torch.sort(logits, dim=-1, descending=True)
             cum = torch.softmax(sorted_logits, dim=-1).cumsum(dim=-1)
-            keep = cum <= top_p
-            # Always keep the most-probable token to avoid empty-mask edge cases.
-            keep[..., 0] = True
+            # Shift cumsum right so the token that first crosses top_p is included.
+            keep = torch.zeros_like(cum, dtype=torch.bool)
+            keep[..., 0] = True                  # always keep most-probable token
+            keep[..., 1:] = cum[..., :-1] < top_p
             mask = torch.zeros_like(logits, dtype=torch.bool).scatter_(-1, sorted_idx, keep)
             logits = torch.where(mask, logits, torch.full_like(logits, float("-inf")))
 

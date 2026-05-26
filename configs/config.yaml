@@ -90,11 +90,12 @@ augment:
   # Teaches the model to handle slightly stretched / shortened note lengths.
   # 1 bin ≈ ±1 sixteenth note (at resolution=4).
   duration_jitter_bins: 1
-  # Classifier-Free Guidance: probability of replacing the melody condition
-  # with PAD tokens so the model also learns P(accompaniment) (no prompt).
-  # NOTE: CFG / condition dropout is NOT supported in interleaved format
-  # (no SEP token → dropout is a no-op). Set to 0.0.
-  condition_dropout_prob: 0.0
+  # Classifier-Free Guidance: with this probability, the melody section of a
+  # chunk is replaced with PAD tokens so the model also learns unconditional
+  # P(accompaniment).  The SEP token acts as the boundary marker.
+  # 0.05 = 5% of chunks are trained without melody → teaches robustness to
+  # silent/absent melody input at inference time.
+  condition_dropout_prob: 0.05
 
 training:
   # Base batch size before VRAM-tier scaling (env_scaling.tiers multiplies this).
@@ -142,6 +143,23 @@ training:
   # distorts the data distribution (downweights sparse-texture songs). Keeping a
   # single targeted training-time lever (loss_boost) for clean attribution.
   polyphony_sample_weight_alpha: 0.0
+  # ------------------------------------------------------------------
+  # Source-balanced sampling (WeightedRandomSampler, no data discarded)
+  # ------------------------------------------------------------------
+  # Natural distribution (actual shard counts): lakh≈90.3%, pop909≈4.9%, slakh≈4.7%.
+  # Target effective distribution: lakh=55%, slakh=40%, pop909=5%.
+  # Weights back-calculated as: w_i = target_i / natural_i, normalised so max=1.0.
+  # Priority: Slakh (professional, highest harmonic quality) > Lakh (diverse western)
+  #           > POP909 (clean pairs but all Chinese pop → genre/harmonic bias).
+  # Per-epoch exposure: slakh ×8.5 / pop909 ×1.0 (natural rate) / lakh ×0.61
+  # Set all to 1.0 to disable (uniform / natural distribution).
+  source_weight_pop909: 0.1199
+  source_weight_slakh:  1.0
+  source_weight_lakh:   0.0716
+  # Song-level train/val split: 20% of songs held out for validation.
+  # Deterministic SHA-256 hash of shard filename — stable across re-runs.
+  # 0.0 = legacy stride-only split (all songs in both train and val).
+  val_ratio: 0.2
   # val batch_size — validation has no backward pass so activations need not
   # be retained.  0 = auto (2× train batch_size), halving val epoch time
   # and reducing peak VRAM spikes during evaluation.
@@ -158,23 +176,23 @@ training:
   checkpoint_monitor_mode: "min"
   # last.ckpt: every 5 epochs is enough — last_step.ckpt covers mid-epoch gaps.
   checkpoint_every_n_epochs: 5
-  # last_step.ckpt: every 100 steps ≈ ~3s on RTX 4090 (bs=32). Set 0 to disable.
-  checkpoint_every_n_train_steps: 100
+  # last_step.ckpt: every 1000 steps ≈ ~30s on RTX 4090 (bs=32). Set 0 to disable.
+  # 100-step interval caused severe I/O overhead (~450MB write every ~3s on HDD).
+  checkpoint_every_n_train_steps: 1000
   # Early stopping — refuse to keep burning GPU when val_loss plateaus.
   # Triggered iff training runs for at least `early_stopping_min_epochs`.
   early_stopping_enabled: true
   # patience: how many epochs without improvement before stopping.
-  # Must outlast the warmup period (~8 ep on T4) + allow for cosine-decay
-  # slow-improvement phases. 15 gives the model a full LR cycle to breathe.
-  early_stopping_patience: 15
+  # 10 epochs outlasts the warmup period and covers cosine-decay slow phases
+  # without burning excess GPU budget.
+  early_stopping_patience: 10
   # min_delta: improvement < this is treated as "no improvement" and counts
   # against patience. 0.001 is tight enough to skip noise but loose enough
   # not to penalise the gradual tail of cosine decay.
   early_stopping_min_delta: 0.001
   # min_epochs: never stop before this epoch regardless of patience.
-  # Set to at least the warmup duration so early stopping doesn't trigger
-  # while the LR is still ramping up.
-  early_stopping_min_epochs: 15
+  # Matched to patience so early stopping only fires after a full patience window.
+  early_stopping_min_epochs: 10
   # Logging persistence (independent of W&B availability).
   log_to_file: true
   log_dir: "logs"
@@ -233,6 +251,14 @@ dsp:
   # Limiter: prevents clipping on final output
   limiter: true
   limiter_threshold_db: -1.0
+
+preprocessing:
+  # Songs whose melody coverage (fraction of bars with ≥1 melody note) falls
+  # below this threshold are excluded during prepare_data.py.
+  # Filters Lakh/Slakh tracks where the detected "melody" is actually a sparse
+  # solo/fill that provides almost no conditioning signal.
+  # 0.0 = disabled.
+  min_melody_coverage: 0.20
 
 audio_input:
   # Spectral noise reduction via noisereduce (applied before basic-pitch).

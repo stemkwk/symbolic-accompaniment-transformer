@@ -656,10 +656,22 @@ class REMITokenizer(BaseTokenizer):
         ids: List[int],
         mask: List[bool],
         is_target: bool,
+        chord_map: "dict | None" = None,
+        chord_callback: "Any | None" = None,
     ) -> None:
-        """Emit POS / TRACK / note tokens for every position of `bar`."""
+        """Emit POS / TRACK / note tokens for every position of `bar`.
+
+        When `chord_map` and `chord_callback` are supplied (accompaniment
+        section only), a new chord token pair is emitted before any POS token
+        at positions > 0 where the chord changes.  The callback's own dedup
+        logic ensures no redundant tokens are emitted when the chord is stable.
+        """
         bar_positions = grouped.get(bar, {})
         for pos in sorted(bar_positions.keys()):
+            # Mid-bar chord injection: check for chord changes at beat boundaries
+            # (pos > 0 since the bar-head chord is already emitted by the caller).
+            if chord_callback is not None and chord_map is not None and pos > 0:
+                chord_callback(chord_map.get((bar, pos), "UNSET"))
             pos_tracks = bar_positions[pos]
             emitted_pos = False
             for track in track_order:
@@ -782,8 +794,13 @@ class REMITokenizer(BaseTokenizer):
                     ids.append(self.bar_id); mask.append(True)
                 if chord_map is not None:
                     _append_chord(chord_map.get((bar, 0), "UNSET"))
+                # Pass chord_map so _emit_notes_at can inject mid-bar chord
+                # changes at beat positions > 0 (dedup in _append_chord ensures
+                # no redundant tokens when the chord does not change).
                 self._emit_notes_at(acc_grouped, bar, track_order, kr,
-                                    ids, mask, is_target=True)
+                                    ids, mask, is_target=True,
+                                    chord_map=chord_map,
+                                    chord_callback=_append_chord if chord_map is not None else None)
 
         ids.append(self.eos_id); mask.append(False)
         return ids, mask

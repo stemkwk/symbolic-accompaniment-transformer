@@ -29,6 +29,7 @@ lightning_logs/
 pulled_checkpoints/
 pulled_logs/
 wandb/
+*.log
 
 # ==========================================
 # 3. 데이터셋 및 전처리 데이터 (Datasets & Preprocessed Data)
@@ -65,13 +66,7 @@ soundfonts/*
 # ==========================================
 # 5. 빌드 및 배포 번들 (Build & Deployment Bundles)
 # ==========================================
-jam_tx_bundle.*
-jam_light_assets.zip
-jam_assets_bundle.zip
-jam_checkpoints.zip
-jam_data_processed.zip
-jam_soundfonts.zip
-docker-entrypoint.sh
+/bundles/
 
 # ==========================================
 # 6. Python 캐시 및 빌드 파일 (Python Caches & Builds)
@@ -115,6 +110,7 @@ venv/
 ENV/
 env/
 active_env/
+.mm_env/
 
 # ==========================================
 # 9. 에디터 및 OS 임시 파일 (Editors & OS Files)

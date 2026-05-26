@@ -237,18 +237,43 @@ def train(
     if len(full) < 4:
         raise SystemExit(f"Too few shards in {data_dir} (got {len(full)}). Prepare more data.")
 
-    rng = random.Random(42)
-    shard_paths = list(full.shards)
-    rng.shuffle(shard_paths)
-    split = max(1, int(len(shard_paths) * 0.8))
-    train_shards = set(p.name for p in shard_paths[:split])
-    val_shards   = set(p.name for p in shard_paths[split:]) or train_shards
+    # ------------------------------------------------------------------
+    # Train / val index selection
+    # When the dataset already performs a song-level split internally
+    # (val_ratio > 0 and enough shards), `full` contains only train shards
+    # and `full_val` only val shards — use all of each set directly.
+    # Fall back to the legacy in-script 80/20 split for small datasets
+    # (unit tests, < 10 shards) where the internal split is bypassed.
+    # ------------------------------------------------------------------
+    _val_ratio      = float(getattr(config.training, "val_ratio", 0.0))
+    _MIN_FOR_SPLIT  = 10          # must match dataset.py constant
+    _internal_split = (
+        _val_ratio > 0.0
+        and (len(full.shards) + len(full_val.shards)) >= _MIN_FOR_SPLIT
+    )
 
-    train_idx = [i for i, (si, _) in enumerate(full._chunks)
-                 if full.shards[si].name in train_shards]
-    val_idx   = [i for i, (si, _) in enumerate(full_val._chunks)
-                 if full_val.shards[si].name in val_shards]
-    logger.info(f"train chunks: {len(train_idx)}  |  val chunks: {len(val_idx)}")
+    if _internal_split:
+        train_idx = list(range(len(full)))
+        val_idx   = list(range(len(full_val)))
+        logger.info(
+            f"Song-level split (val_ratio={_val_ratio:.0%}): "
+            f"train={len(train_idx)} chunks | val={len(val_idx)} chunks"
+        )
+    else:
+        # Legacy: shuffle all shards from `full`, split 80/20 in-script.
+        rng = random.Random(42)
+        shard_paths = list(full.shards)
+        rng.shuffle(shard_paths)
+        split = max(1, int(len(shard_paths) * 0.8))
+        train_shards = set(p.name for p in shard_paths[:split])
+        val_shards   = set(p.name for p in shard_paths[split:]) or train_shards
+        train_idx = [i for i, (si, _) in enumerate(full._chunks)
+                     if full.shards[si].name in train_shards]
+        val_idx   = [i for i, (si, _) in enumerate(full_val._chunks)
+                     if full_val.shards[si].name in val_shards]
+        logger.info(
+            f"Legacy stride split: train={len(train_idx)} chunks | val={len(val_idx)} chunks"
+        )
 
     train_ds = Subset(full, train_idx)
     val_ds   = Subset(full_val, val_idx)
@@ -268,20 +293,26 @@ def train(
     train_dl_kwargs = dict(batch_size=config.training.batch_size, **_dl_common)
     val_dl_kwargs   = dict(batch_size=_val_bs,                    **_dl_common)
 
-    # Polyphony-weighted sampling for training (uniform for val).
+    # Weighted sampling for training (uniform for val).
     # `WeightedRandomSampler` is mutually exclusive with `shuffle=True`, so we
     # build the Subset-aligned weight tensor and pass it as `sampler`.
-    poly_weights = full.get_sample_weights()      # full, pre-Subset
-    if poly_weights is not None:
-        subset_weights = poly_weights[train_idx]
+    # Weights combine: source-balance × polyphony (both independently optional).
+    sample_weights = full.get_sample_weights()      # full, pre-Subset
+    if sample_weights is not None:
+        subset_weights = sample_weights[train_idx]
         sampler = WeightedRandomSampler(
             weights=subset_weights.tolist(),
             num_samples=len(train_idx),
             replacement=True,
         )
+        sw_p = getattr(config.training, "source_weight_pop909", 1.0)
+        sw_s = getattr(config.training, "source_weight_slakh",  1.0)
+        sw_l = getattr(config.training, "source_weight_lakh",   1.0)
+        alpha = getattr(config.training, "polyphony_sample_weight_alpha", 0.0)
         logger.info(
-            f"polyphony-weighted sampling: alpha="
-            f"{config.training.polyphony_sample_weight_alpha:.2f} | "
+            f"WeightedRandomSampler: "
+            f"src=[pop909={sw_p} slakh={sw_s} lakh={sw_l}] "
+            f"poly_alpha={alpha:.2f} | "
             f"weight range [{subset_weights.min():.3f}, {subset_weights.max():.3f}]"
         )
         train_loader = DataLoader(train_ds, sampler=sampler, **train_dl_kwargs)
@@ -290,7 +321,12 @@ def train(
     val_loader   = DataLoader(val_ds,   shuffle=False, **val_dl_kwargs)
 
     steps_per_epoch = max(1, len(train_loader))
-    total_steps = steps_per_epoch * config.training.epochs
+    # Lightning fires the LR scheduler at every *optimizer* step, not every
+    # batch.  Under gradient accumulation, one optimizer step covers
+    # `accumulate_grad_batches` batches, so total_steps must be divided by that
+    # factor to avoid the scheduler finishing the warmup/decay cycle far too early.
+    accum = max(1, getattr(config.training, "accumulate_grad_batches", 1))
+    total_steps = max(1, (steps_per_epoch // accum) * config.training.epochs)
 
     model = JamTransformerLightning(
         config, vocab_size=tokenizer.vocab_size, total_steps=total_steps

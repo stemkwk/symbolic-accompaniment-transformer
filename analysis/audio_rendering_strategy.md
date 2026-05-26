@@ -17,19 +17,21 @@
 *   **추천 자원**: Salamander Grand Piano (16개 벨로시티 레이어 지원) 등 대용량 사운드폰트.
 *   **장점**: 코드 수정 없이 설정 변경만으로 즉각적인 음질 개선 가능.
 
-### [Phase 2] Python 기반 오디오 후처리 (Mid Effort)
+### [Phase 2] Python 기반 오디오 후처리 (구현 완료)
 *   **핵심 도구**: **`Pedalboard`** (Spotify 개발 라이브러리)
-*   **구현 내용**:
-    1.  **Reverb & Delay**: 스테레오 공간감을 추가하여 인위적인 건조함 제거.
-    2.  **Compressor & EQ**: 소리의 밀도를 높이고 저역/고역의 밸런스를 조정하여 '음반' 같은 사운드 구현.
-    3.  **Limiter**: 볼륨의 피크를 잡아주어 안정적인 출력 보장.
+*   **현 상태**: `src/jam_transformer/audio.py` 내의 `apply_dsp` 함수 및 `config.yaml` 의 `dsp` 섹션으로 **구현이 완료**되었습니다.
+*   **적용 효과**:
+    1.  **Reverb**: 스테레오 공간감(Room size, Damping, Wet level 등)을 가변적으로 추가하여 건조함 제거.
+    2.  **Compressor**: 소리의 밀도와 다이내믹 레인지를 압축하여 단단한 사운드 구현.
+    3.  **Limiter**: 볼륨 피크를 제어하여 클리핑(Clipping) 방지 및 출력 왜곡 제어.
 
-### [Phase 3] VST 호스팅 및 Humanization (High Effort)
-*   **핵심 도구**: **`Dawdreamer`** (Python VST Host)
-*   **구현 내용**:
-    1.  **VST 연동**: 실제 상용 피아노 VST(예: Kontakt, Addictive Keys 등)를 Python 코드에서 직접 구동.
-    2.  **ADSR 제어**: MIDI 메시지를 넘어서는 미세한 ADSR(Envelope) 및 페달링 제어.
-    3.  **Humanizer**: 렌더링 직전 미세한 타이밍 오차와 벨로시티 노이즈를 추가하여 인간적인 연주 느낌 부여.
+### [Phase 3] VST 호스팅 및 Humanization
+*   **Humanization (구현 완료)**:
+    *   `src/jam_transformer/midi_io.py` 내의 `humanize_midi` 함수 및 `config.yaml` 의 `humanize` 섹션으로 **구현이 완료**되었습니다.
+    *   노트의 start/end 타이밍 및 velocity에 가우시안 노이즈(Jitter)를 가해 기계적인 연주 느낌을 획기적으로 줄였습니다.
+*   **VST 호스팅 (추후 과제)**:
+    *   **핵심 도구**: **`Dawdreamer`** (Python VST Host)
+    *   **구현 계획**: 상용 피아노 VST(예: Kontakt, Addictive Keys 등)를 Python에서 직접 구동하고 미세한 ADSR(Envelope) 및 페달링 제어 연동. VST 라이선스 및 빌드 복잡성으로 인해 현재는 기본 FluidSynth 합성 엔진만을 지원하며, 장기 과제로 남겨둡니다.
 
 ---
 

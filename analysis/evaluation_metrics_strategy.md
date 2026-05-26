@@ -23,17 +23,19 @@
 ---
 
 ## 2. 학술적 추이성(Trend) 및 제어 가능성 분석
-
+ 
 단순 수치 비교를 넘어, 모델의 '경향성'을 분석하여 공학적 타당성을 확보합니다.
-
-### A. Controllability Trend (제어 추이)
-*   **실험**: `structural_suppression` 파라미터를 0.0에서 3.0까지 가변하며 결과 관찰.
-*   **지표**: 파라미터 값 변화에 따른 **Polyphony Rate의 비례적 상승**을 그래프로 제시.
-*   **의도**: 모델이 무작위가 아닌, 연구자의 의도에 따라 결정론적으로 제어되고 있음을 증명.
-
+ 
+### A. Controllability Trend (제어 추이 - 구현 완료)
+*   **실행 스크립트**: `scripts/controllability_sweep.py`
+*   **실험**: `structural_suppression` 파라미터를 0.0에서 2.0+까지 가변하며 생성된 반주의 변화를 관찰.
+*   **지표**: 파라미터 값 변화에 따른 **Polyphony Rate(다성부 비율)의 변화**와 **Notes/Bar** 수치를 정량적으로 측정하고, `controllability_polyphony.png` 그래프로 자동 시각화합니다.
+*   **의도**: 모델이 무작위가 아닌, 추론 시점에 연구자의 제어 변수에 따라 결정론적으로 조작되고 있음을 입증합니다.
+ 
 ### B. Ablation Study (제어 변수 실험)
-*   제안된 핵심 기능들(`polyphony_loss_boost`, `Chord Tokens` 등)을 하나씩 제거하며 성능 변화를 측정.
-*   각 기능이 최종 성능 향상에 기여하는 정량적 비중을 도출.
+*   **실행 스크립트**: `scripts/compare_inference.py`
+*   **실험**: 제안된 핵심 기능들(`polyphony_loss_boost`, 전조 증강 범위 등)을 활성화/비활성화하여 생성물을 다각도로 비교 검증합니다.
+*   **지표**: 모델 설정별 생성 속도, Pitch-Class 분포 일치성, Polyphony Rate 등의 통계 데이터를 도출하여 기여율을 정량화합니다.
 
 ---
 

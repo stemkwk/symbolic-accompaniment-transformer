@@ -126,7 +126,7 @@ def humanize_midi(
     """
     tpb = midi.ticks_per_beat
     tempo = midi.tempo_changes[0].tempo if midi.tempo_changes else 120.0
-    ms_per_tick = (tempo / 1000.0) / tpb  # microseconds→ms per tick
+    ms_per_tick = (60000.0 / tempo) / tpb  # BPM → ms/tick: (60000 ms/min) / BPM / (ticks/beat)
 
     timing_std_ticks = int(timing_std_ms / ms_per_tick)
     duration_std_ticks = int(duration_std_ms / ms_per_tick)

@@ -125,6 +125,27 @@ def _render(midi_path: Path, cfg, out_wav: Path | None = None) -> Path | None:
     return out_wav
 
 
+def _to_f32(arr: np.ndarray) -> np.ndarray:
+    """Normalise any integer or float WAV array to float32 in [-1, 1].
+
+    scipy.io.wavfile.read returns different dtypes depending on bit depth:
+      uint8  (8-bit PCM)  : 0..255, silence = 128  → (x - 128) / 128
+      int16  (16-bit PCM) : -32768..32767           → x / 32767
+      int32  (24/32-bit)  : -2^31..2^31-1           → x / iinfo.max
+      float32/float64     : already in [-1, 1]      → cast only
+    Using a fixed int16 divisor for all types causes severe clipping (int32)
+    or near-silence (uint8).
+    """
+    if arr.dtype == np.uint8:
+        # unsigned 8-bit: DC offset at 128
+        return (arr.astype(np.float32) - 128.0) / 128.0
+    if np.issubdtype(arr.dtype, np.signedinteger):
+        # int16, int32, etc. — scale by the actual type maximum
+        return arr.astype(np.float32) / float(np.iinfo(arr.dtype).max)
+    # float32 / float64 — just cast
+    return arr.astype(np.float32)
+
+
 def _loop_and_mix(melody_wav: Path, accomp_wav: Path, out_path: Path) -> None:
     """Loop melody to match accompaniment length and mix at equal volume."""
     sr_m, mel = wavfile.read(str(melody_wav))
@@ -136,6 +157,10 @@ def _loop_and_mix(melody_wav: Path, accomp_wav: Path, out_path: Path) -> None:
     if acc.ndim > 1:
         acc = acc.mean(axis=1)
 
+    # Normalise both tracks to float32 [-1, 1] before any arithmetic
+    mel = _to_f32(mel)
+    acc = _to_f32(acc)
+
     # Simple resample if sample rates differ (linear interp)
     if sr_m != sr_a:
         from scipy.signal import resample
@@ -145,10 +170,9 @@ def _loop_and_mix(melody_wav: Path, accomp_wav: Path, out_path: Path) -> None:
     n_repeats = math.ceil(len(acc) / max(len(mel), 1))
     mel_looped = np.tile(mel, n_repeats)[: len(acc)]
 
-    # Mix with equal weight, prevent clipping
-    mixed = mel_looped.astype(np.float32) * 0.5 + acc.astype(np.float32) * 0.5
-    mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-    wavfile.write(str(out_path), sr_a, mixed)
+    # Mix with equal weight, prevent clipping, write as int16
+    mixed = np.clip(mel_looped * 0.5 + acc * 0.5, -1.0, 1.0)
+    wavfile.write(str(out_path), sr_a, (mixed * 32767).astype(np.int16))
 
 
 def _default_name() -> str:
@@ -198,11 +222,18 @@ def _run_simple(
 
     try:
         raw_audio = audio_file or mic_audio
-        if raw_audio:
+        if midi_file and raw_audio:
+            # MIDI + 오디오 동시 제공: MIDI로 생성(전사 오류 없음), raw 오디오로 믹싱(원음 보존)
+            melody_midi = Path(midi_file if isinstance(midi_file, str) else midi_file.name)
+            input_preview = raw_audio
+            input_wav_for_mix = Path(raw_audio)
+        elif raw_audio:
+            # 오디오만: 전사 → MIDI로 생성, raw 오디오로 믹싱
             input_preview = raw_audio
             input_wav_for_mix = Path(raw_audio)
             melody_midi = _transcribe_audio(Path(raw_audio), acfg, denoise)
         elif midi_file:
+            # MIDI만: 렌더링한 WAV로 미리듣기 및 믹싱
             melody_midi = Path(midi_file if isinstance(midi_file, str) else midi_file.name)
             input_preview_wav = _render(melody_midi, cfg, out_dir / "input.wav")
             input_preview = str(input_preview_wav) if input_preview_wav else None

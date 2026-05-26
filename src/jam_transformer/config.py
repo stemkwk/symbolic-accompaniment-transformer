@@ -80,6 +80,17 @@ class ModelConfig:
 
 
 @dataclass
+@dataclass
+class PreprocessingConfig:
+    """Controls offline data-preparation quality filters (prepare_data.py)."""
+    # Fraction of bars that must contain at least one melody note.
+    # Songs below this threshold are skipped entirely — their "melody" track is
+    # typically a sparse solo/fill that barely conditions the accompaniment.
+    # 0.0 = disabled.  Recommended: 0.20.
+    min_melody_coverage: float = 0.20
+
+
+@dataclass
 class AugmentConfig:
     pitch_transpose_semitones: int = 6
     velocity_jitter_bins: int = 2
@@ -123,16 +134,33 @@ class TrainingConfig:
     # Polyphony-weighted chunk sampling
     # ------------------------------------------------------------------
     polyphony_sample_weight_alpha: float = 0.5
+    # ------------------------------------------------------------------
+    # Source-balanced sampling weights (relative, multiplicative).
+    # Natural distribution: lakh≈92%, pop909≈3%, slakh≈5%.
+    # Set lakh weight < 1.0 to down-sample; set pop909/slakh > 1.0 to
+    # up-sample. Weights are combined with polyphony_sample_weight_alpha
+    # (if active) before being passed to WeightedRandomSampler.
+    # 0.3/1.0/0.08 → effective ~6% pop909 / 39% slakh / 55% lakh.
+    # Priority: Slakh (professional) > Lakh (diverse western) > POP909 (Chinese-biased).
+    # All 1.0 = uniform (natural) distribution.
+    source_weight_pop909: float = 1.0
+    source_weight_slakh: float = 1.0
+    source_weight_lakh: float = 1.0
+    # Song-level train/val split ratio. Songs are assigned deterministically
+    # via SHA-256 hash of the shard filename — stable across re-runs and
+    # independent of filesystem order. 0.0 = legacy stride-only split (all
+    # songs appear in both train and val); recommended value = 0.2.
+    val_ratio: float = 0.0
     log_every_n_steps: int = 25
     checkpoint_dir: str = "checkpoints"
     checkpoint_monitor: str = "val_loss"
     checkpoint_monitor_mode: str = "min"
     checkpoint_every_n_epochs: int = 5
-    checkpoint_every_n_train_steps: int = 100
+    checkpoint_every_n_train_steps: int = 1000
     early_stopping_enabled: bool = True
-    early_stopping_patience: int = 15
+    early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
-    early_stopping_min_epochs: int = 15
+    early_stopping_min_epochs: int = 10
     log_to_file: bool = True
     log_dir: str = "logs"
     csv_logger_enabled: bool = True
@@ -150,7 +178,9 @@ class InferenceConfig:
     render_audio: bool = False
     soundfont: str = ""
     sample_rate: int = 22050
-    structural_suppression: float = 1.5
+    # 0.0 = disabled (train with polyphony_loss_boost first; enable only if
+    # generated accompaniment is still too sparse after training).
+    structural_suppression: float = 0.0
 
 
 @dataclass
@@ -230,6 +260,7 @@ class AppConfig:
     training: TrainingConfig
     inference: InferenceConfig
     env_scaling: EnvScalingConfig
+    preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     augment: AugmentConfig = field(default_factory=AugmentConfig)
     humanize: HumanizeConfig = field(default_factory=HumanizeConfig)
     audio_input: AudioInputConfig = field(default_factory=AudioInputConfig)
@@ -276,6 +307,7 @@ def load_config(path: str | Path) -> AppConfig:
         training=_populate(TrainingConfig, raw.get("training"), "training"),
         inference=_populate(InferenceConfig, raw.get("inference"), "inference"),
         env_scaling=_populate(EnvScalingConfig, env_raw, "env_scaling"),
+        preprocessing=_populate(PreprocessingConfig, raw.get("preprocessing"), "preprocessing"),
         augment=_populate(AugmentConfig, raw.get("augment"), "augment"),
         humanize=_populate(HumanizeConfig, raw.get("humanize"), "humanize"),
         audio_input=_populate(AudioInputConfig, raw.get("audio_input"), "audio_input"),

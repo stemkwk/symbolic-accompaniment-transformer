@@ -6,7 +6,9 @@
 #   docker compose run --rm train python scripts/train.py --epochs 80
 services:
   train:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     image: jam-transformer:latest
     runtime: nvidia
     # Docker's default /dev/shm is 64MB — too small for PyTorch DataLoader workers

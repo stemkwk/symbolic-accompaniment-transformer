@@ -96,9 +96,33 @@ class JamTokenDataset(Dataset):
         self.max_len   = config.tokenizer.max_seq_len
         self.data_dir  = Path(data_dir)
 
-        self.shards: List[Path] = sorted(
+        all_shards: List[Path] = sorted(
             p for p in self.data_dir.glob("*.pt") if not p.name.startswith("_")
         )
+
+        # ---- Song-level train/val split (hash-based, deterministic) ----------
+        # Only applied when there are enough shards (guard: keeps unit-test
+        # tmp_path dirs — typically 1-3 shards — in the legacy stride-only mode
+        # so existing tests that assert train[0]==val[0] continue to pass).
+        val_ratio = float(getattr(config.training, "val_ratio", 0.0))
+        _MIN_SHARDS_FOR_SPLIT = 10
+
+        if val_ratio > 0.0 and len(all_shards) >= _MIN_SHARDS_FOR_SPLIT:
+            def _is_val(name: str) -> bool:
+                h = int(hashlib.sha256(f"42:{name}".encode()).hexdigest(), 16)
+                return (h % 10000) < int(val_ratio * 10000)
+
+            if train:
+                self.shards = [p for p in all_shards if not _is_val(p.name)]
+            else:
+                self.shards = [p for p in all_shards if _is_val(p.name)]
+            logger.debug(
+                f"Song-level split (val_ratio={val_ratio:.0%}): "
+                f"{'train' if train else 'val'} = {len(self.shards)}/{len(all_shards)} shards"
+            )
+        else:
+            self.shards = all_shards
+
         if not self.shards:
             logger.warning(f"No .pt shards found under {self.data_dir}")
 
@@ -183,12 +207,51 @@ class JamTokenDataset(Dataset):
         return scores
 
     def get_sample_weights(self) -> Optional["torch.Tensor"]:
-        alpha = float(getattr(self.config.training, "polyphony_sample_weight_alpha", 0.0))
-        if alpha <= 0.0 or self._poly_scores is None:
-            return None
+        """Return per-chunk sampling weights for WeightedRandomSampler, or None
+        if all weights are uniform (→ use plain shuffle instead).
+
+        Combines two independent axes (both optional):
+          1. **Polyphony** (polyphony_sample_weight_alpha > 0): up-weight
+             chunks with denser chords.
+          2. **Source balance** (source_weight_* != 1.0): correct the
+             lakh/pop909/slakh imbalance without discarding data.
+        """
         import torch as _t
-        scores  = _t.tensor(self._poly_scores, dtype=_t.float32)
-        weights = (scores + 0.01).pow(alpha)
+        weights: Optional[_t.Tensor] = None
+
+        # ---- 1. Polyphony weights ------------------------------------------
+        alpha = float(getattr(self.config.training, "polyphony_sample_weight_alpha", 0.0))
+        if alpha > 0.0 and self._poly_scores is not None:
+            scores  = _t.tensor(self._poly_scores, dtype=_t.float32)
+            weights = (scores + 0.01).pow(alpha)
+
+        # ---- 2. Source weights ---------------------------------------------
+        sw_pop909 = float(getattr(self.config.training, "source_weight_pop909", 1.0))
+        sw_slakh  = float(getattr(self.config.training, "source_weight_slakh",  1.0))
+        sw_lakh   = float(getattr(self.config.training, "source_weight_lakh",   1.0))
+
+        # Only build a source-weight tensor when:
+        #   (a) the configured weights differ across sources, AND
+        #   (b) the actual chunks span at least two distinct weights.
+        # This ensures that datasets where ALL shards share one prefix (or
+        # no prefix) return None rather than a trivially-uniform tensor,
+        # which keeps `train.py` in the cheaper `shuffle=True` path.
+        if not (sw_pop909 == sw_slakh == sw_lakh):
+            src_w: List[float] = []
+            for si, _ in self._chunks:
+                stem = self.shards[si].stem
+                if stem.startswith("pop909"):
+                    src_w.append(sw_pop909)
+                elif stem.startswith("slakh"):
+                    src_w.append(sw_slakh)
+                elif stem.startswith("lakh"):
+                    src_w.append(sw_lakh)
+                else:
+                    src_w.append(1.0)
+            if len(set(src_w)) > 1:          # at least two distinct weights
+                sw_tensor = _t.tensor(src_w, dtype=_t.float32)
+                weights = sw_tensor if weights is None else weights * sw_tensor
+
         return weights
 
     # ------------------------------------------------------------------
@@ -224,44 +287,41 @@ class JamTokenDataset(Dataset):
             pitch_lo = self.config.tokenizer.pitch_min
             pitch_hi = self.config.tokenizer.pitch_max
 
-            # Compute safe shift range from (CHROMA, OCTAVE) pairs
-            abs_pitches: list[int] = []
-            for i in range(1, len(ids)):
-                oct_id    = int(ids[i].item())
-                chroma_id = int(ids[i - 1].item())
-                if omin <= oct_id <= omax and cmin <= chroma_id < omin:
-                    c = chroma_id - cmin
-                    o = oct_id - omin + obase
-                    abs_pitches.append(o * 12 + (c + key_root) % 12)
+            # Vectorized: detect all adjacent (CHROMA, OCTAVE) token pairs.
+            # A valid note is encoded as ids[i-1] ∈ [cmin, omin) followed by
+            # ids[i] ∈ [omin, omax].
+            prev_ids = ids[:-1]
+            curr_ids = ids[1:]
+            valid_pairs = (
+                (prev_ids >= cmin) & (prev_ids < omin) &
+                (curr_ids >= omin) & (curr_ids <= omax)
+            )
 
-            if abs_pitches:
-                lo = -min(half, min(abs_pitches) - pitch_lo)
-                hi =  min(half, pitch_hi - max(abs_pitches))
+            if valid_pairs.any():
+                chromas    = prev_ids[valid_pairs] - cmin
+                octaves    = curr_ids[valid_pairs] - omin + obase
+                abs_pitches = octaves * 12 + (chromas + key_root) % 12
+
+                lo = -int(min(half, int(abs_pitches.min().item()) - pitch_lo))
+                hi =  int(min(half, pitch_hi - int(abs_pitches.max().item())))
                 if hi >= lo:
                     offset = _r.randint(lo, hi)
                     if offset != 0:
                         ids = ids.clone()
-                        # 1a. Update KEY root
+                        # 1a. Update KEY root (vectorized)
                         if kmin >= 0:
                             key_mask = (ids >= kmin) & (ids <= kmax)
                             if key_mask.any():
-                                rel = ids[key_mask] - kmin
-                                mode = rel // 12
+                                rel      = ids[key_mask] - kmin
+                                mode     = rel // 12
                                 new_root = (rel % 12 + offset) % 12
                                 ids[key_mask] = kmin + mode * 12 + new_root
-                        # 1b. Update OCTAVE tokens (CHROMA unchanged)
-                        for i in range(1, len(ids)):
-                            oct_id    = int(ids[i].item())
-                            chroma_id = int(ids[i - 1].item())
-                            if omin <= oct_id <= omax and cmin <= chroma_id < omin:
-                                c = chroma_id - cmin
-                                o = oct_id - omin + obase
-                                abs_p   = o * 12 + (c + key_root) % 12
-                                new_abs = max(pitch_lo, min(pitch_hi, abs_p + offset))
-                                new_o   = new_abs // 12
-                                new_oid = omin + (new_o - obase)
-                                new_oid = max(omin, min(omax, new_oid))
-                                ids[i]  = new_oid
+                        # 1b. Update OCTAVE tokens (CHROMA unchanged) — vectorized
+                        new_abs  = (abs_pitches + offset).clamp(pitch_lo, pitch_hi)
+                        new_o    = new_abs // 12
+                        new_oids = (omin + (new_o - obase)).clamp(omin, omax)
+                        oct_pos  = valid_pairs.nonzero(as_tuple=False).squeeze(1) + 1
+                        ids[oct_pos] = new_oids
 
         # ---- 2. Velocity jitter --------------------------------------------
         vel_jitter = int(getattr(aug, "velocity_jitter_bins", 0) or 0)
