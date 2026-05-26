@@ -151,6 +151,26 @@ RUNPOD_API_KEY=여기에_발급받은_키_붙여넣기
 
 ---
 
+### TORCHDYNAMO_DISABLE (Windows + Docker Desktop 필수)
+
+**Windows에서 Docker Desktop(WSL2)으로 학습하는 경우 반드시 설정합니다.**
+
+`torch.compile`의 Triton JIT 컴파일러가 WSL2 Docker 환경에서 구조적으로 충돌(SIGSEGV)합니다.  
+아래 줄의 주석(`#`)을 제거하세요:
+
+```
+# 변경 전 (주석 처리됨)
+# TORCHDYNAMO_DISABLE=1
+
+# 변경 후 (주석 제거)
+TORCHDYNAMO_DISABLE=1
+```
+
+> native Linux 서버(RunPod 등)에서 학습하는 경우 이 줄을 주석 상태로 두거나 삭제하면  
+> `torch.compile`이 활성화되어 20~30% 속도 향상을 얻을 수 있습니다.
+
+---
+
 저장 후 메모장을 닫으세요. `.env` 파일은 git에서 제외되어 있으므로 커밋될 걱정 없이 실제 키를 적어두면 됩니다.
 
 ---
@@ -252,14 +272,12 @@ docker compose run --rm -e WANDB_DISABLED=true train `
   python scripts/train.py `
   --data_dir data/test_processed `
   --fast_dev_run `
-  --set model.compile=false `
   --set training.log_to_file=false `
   --set training.csv_logger_enabled=false
 ```
 
-> `--set model.compile=false` : GPU 전용 커널 컴파일을 건너뜁니다.  
-> VRAM이 적은 로컬 검증 머신에서 컴파일 도중 충돌(segfault)이 생길 수 있기 때문입니다.  
-> 16GB 학습 머신에서는 이 플래그 없이 그대로 실행합니다.
+> `torch.compile` 충돌(segfault)이 걱정된다면 4단계에서 `.env`에 `TORCHDYNAMO_DISABLE=1`을 설정했는지 확인하세요.  
+> Windows + Docker Desktop 환경에서는 이것으로 충분히 방지됩니다.
 
 아래처럼 마지막 줄이 나오면 정상입니다:
 
@@ -341,7 +359,7 @@ Epoch 42/200: 100%|██████████| 312/312 [08:14<00:00, train_l
 ```
 
 체크포인트 자동 저장:
-- `checkpoints/last_step.ckpt` — 100 스텝마다 (전원 차단 대비)
+- `checkpoints/last_step.ckpt` — 1000 스텝마다 (전원 차단 대비)
 - `checkpoints/best-epoch=XXX-val_loss=X.XXXX.ckpt` — val_loss 개선 시
 
 `Ctrl+C` 로 언제든 중단. 재개 시 `--resume checkpoints/last_step.ckpt` 사용.
@@ -381,7 +399,7 @@ docker compose run --rm -e WANDB_DISABLED=true train `
 |---|---|
 | `docker: command not found` | 컨테이너 안에서 명령을 치고 있음. `exit` 후 PowerShell에서 실행 |
 | `CUDA: False` | Docker Desktop → Settings → Resources → WSL Integration에서 Ubuntu 활성화 확인 |
-| `Segmentation fault` | `--set model.compile=false` 추가 (VRAM 4~8GB 로컬 머신에서 발생) |
+| `Segmentation fault` | `.env`에 `TORCHDYNAMO_DISABLE=1` 설정 (4단계 참고). Windows + Docker Desktop 환경에서 발생 |
 | `OOM: CUDA out of memory` | `--set training.batch_size=16 --set training.accumulate_grad_batches=4` 추가 |
 | 5~10분간 아무것도 안 뜸 | 정상. 데이터셋 인덱싱 중. 기다리면 됨 |
 | `No module named ...` | `docker compose build` 재실행 |
