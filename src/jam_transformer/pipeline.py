@@ -5,8 +5,8 @@ from pathlib import Path
 
 import torch
 
-from jam_transformer.logger import logger
-from jam_transformer.midi_io import events_to_midi, humanize_midi, midi_to_events
+from jam_transformer.utils.logger import logger
+from jam_transformer.utils.midi_io import events_to_midi, humanize_midi, midi_to_events
 from jam_transformer.tokenizer import BaseTokenizer
 
 
@@ -59,6 +59,13 @@ def load_checkpoint(ckpt_path: str, cfg, vocab_size: int) -> _InferenceModel:
         logger.warning(f"Unexpected keys ({len(unexpected)}): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
     if not missing and not unexpected:
         logger.info("State dict loaded cleanly.")
+    ckpt_vocab = model.tok_emb.weight.shape[0]
+    if ckpt_vocab != vocab_size:
+        raise RuntimeError(
+            f"Vocab size mismatch: checkpoint has {ckpt_vocab} tokens "
+            f"but current tokenizer has {vocab_size}. "
+            "Rebuild the checkpoint or use the matching tokenizer config."
+        )
     return _InferenceModel(model)
 
 

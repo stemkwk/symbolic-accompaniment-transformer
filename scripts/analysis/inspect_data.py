@@ -37,9 +37,9 @@ import torch
 
 from jam_transformer.config import AppConfig, load_config
 from jam_transformer.dataset import JamTokenDataset
-from jam_transformer.logger import logger
-from jam_transformer.midi_io import events_to_midi
-from jam_transformer.overrides import apply_overrides
+from jam_transformer.utils.logger import logger
+from jam_transformer.utils.midi_io import events_to_midi
+from jam_transformer.utils.overrides import apply_overrides
 from jam_transformer.tokenizer import BaseTokenizer, NoteEvent, build_tokenizer
 
 

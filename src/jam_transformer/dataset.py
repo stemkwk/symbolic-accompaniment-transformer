@@ -37,7 +37,7 @@ from torch.utils.data import Dataset
 
 from jam_transformer.config import AppConfig
 from jam_transformer.tokenizer import BaseTokenizer
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 
 
 META_FILENAME = "_dataset_meta.json"

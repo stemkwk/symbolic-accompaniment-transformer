@@ -56,7 +56,7 @@ import torch
 import miditoolkit
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_SCRIPTS_DIR.parent / "src"))
+sys.path.insert(0, str(_SCRIPTS_DIR.parent.parent / "src"))
 
 try:
     from dotenv import load_dotenv
@@ -66,10 +66,11 @@ except ImportError:
 
 from jam_transformer.config import load_config, TokenizerConfig
 from jam_transformer.lightning_module import JamTransformerLightning
-from jam_transformer.logger import logger
-from jam_transformer.midi_io import events_to_midi, midi_to_events
+from jam_transformer.utils.logger import logger
+from jam_transformer.utils.midi_io import events_to_midi, midi_to_events
+from jam_transformer.pipeline import estimate_key_from_midi
 from jam_transformer.tokenizer import BaseTokenizer, NoteEvent, build_tokenizer
-from jam_transformer.overrides import apply_overrides
+from jam_transformer.utils.overrides import apply_overrides
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -645,8 +646,14 @@ def _build_prompt(
 ) -> Tuple[torch.Tensor, float]:
     events, midi_tempo = midi_to_events(midi_path, tokenizer.cfg)
     tempo = tempo_override if tempo_override is not None else midi_tempo
+    key_root: Optional[int] = None
+    key_mode: Optional[int] = None
+    kresult = estimate_key_from_midi(midi_path)
+    if kresult is not None:
+        key_root, key_mode = kresult
     ids, _ = tokenizer.encode_song(
         events, condition_tracks=cond_tracks, target_tracks=[], tempo_bpm=tempo,
+        key_root=key_root, key_mode=key_mode,
     )
     if ids and ids[-1] == tokenizer.eos_id:
         ids = ids[:-1]

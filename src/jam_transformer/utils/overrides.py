@@ -16,7 +16,7 @@ from typing import Any, Iterable
 import yaml
 
 from jam_transformer.config import AppConfig
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 
 
 def _coerce(value: Any, target_type) -> Any:

@@ -47,7 +47,7 @@ import numpy as np
 import torch
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_SCRIPTS_DIR.parent / "src"))
+sys.path.insert(0, str(_SCRIPTS_DIR.parent.parent / "src"))
 
 try:
     from dotenv import load_dotenv
@@ -57,9 +57,9 @@ except ImportError:
 
 from jam_transformer.config import load_config
 from jam_transformer.lightning_module import JamTransformerLightning
-from jam_transformer.logger import logger
-from jam_transformer.midi_io import midi_to_events
-from jam_transformer.overrides import apply_overrides
+from jam_transformer.utils.logger import logger
+from jam_transformer.utils.midi_io import midi_to_events
+from jam_transformer.utils.overrides import apply_overrides
 from jam_transformer.tokenizer import NoteEvent, build_tokenizer
 
 

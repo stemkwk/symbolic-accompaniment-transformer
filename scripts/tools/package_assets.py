@@ -22,8 +22,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jam_transformer.logger import logger
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from jam_transformer.utils.logger import logger
 
 # ---------------------------------------------------------------------------
 # Preset definitions
@@ -108,7 +108,7 @@ def add_dir_to_zip(zip_file: zipfile.ZipFile, dir_path: Path, root_path: Path) -
 
 def main() -> None:
     args = parse_args()
-    root_path = Path(__file__).resolve().parents[1]
+    root_path = Path(__file__).resolve().parents[2]
 
     # ------------------------------------------------------------------
     # Resolve which targets to include and output filename

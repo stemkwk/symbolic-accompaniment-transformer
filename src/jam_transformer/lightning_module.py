@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 
 from jam_transformer.config import AppConfig
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 from jam_transformer.model import build_model
 from jam_transformer.tokenizer import REMITokenizer, build_tokenizer
 from jam_transformer.train_components import build_optimizer, build_scheduler

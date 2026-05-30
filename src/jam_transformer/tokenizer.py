@@ -20,11 +20,11 @@ Given transposition by N semitones (new_key_root = (key_root+N)%12):
 CHROMA and SCALE_DEGREE are invariant. Only KEY root and OCTAVE need updating
 during pitch augmentation.
 
-Vocabulary layout (174 tokens)
+Vocabulary layout (173 tokens)
 --------------------------------
   [0]          PAD
   [1]          BOS
-  [2]          SEP           (reserved; not used in interleaved format)
+  [2]          SEP           (melody→accompaniment block boundary)
   [3]          EOS
   [4]          BAR
   [5..20]      POS_0..POS_15           (16 positions per bar)
@@ -66,8 +66,8 @@ and accompaniment notes that are harmonically simultaneous adjacent in the
 token sequence, giving the model direct causal access to the melody context
 when predicting each accompaniment note.
 
-The <SEP> token is reserved in the vocabulary but NOT emitted in the
-interleaved format.  CFG (classifier-free guidance) is not supported in
+The <SEP> token is emitted as the melody→accompaniment block boundary in
+the interleaved format.  CFG (classifier-free guidance) is not supported in
 interleaved mode; set cfg_w=0 in inference config.
 
 Augmentation contract
@@ -91,7 +91,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Type
 
 from jam_transformer.config import TokenizerConfig
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 
 
 # ---------------------------------------------------------------------------

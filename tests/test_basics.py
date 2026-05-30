@@ -361,7 +361,7 @@ def test_condition_dropout_prob_one_replaces_condition(tmp_path, cfg, tokenizer)
 
 
 def test_cli_overrides_apply(cfg):
-    from jam_transformer.overrides import apply_overrides
+    from jam_transformer.utils.overrides import apply_overrides
     apply_overrides(cfg, ["model.d_model=384", "training.learning_rate=1e-4"])
     assert cfg.model.d_model == 384
     assert cfg.training.learning_rate == 1e-4

@@ -27,9 +27,9 @@ import numpy as np
 import torch
 from scipy.io import wavfile
 
-from jam_transformer.audio import apply_dsp, audio_to_midi, render_midi_to_wav
+from jam_transformer.utils.audio import apply_dsp, audio_to_midi, render_midi_to_wav
 from jam_transformer.config import load_config
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 from jam_transformer.pipeline import generate_accompaniment, load_checkpoint
 from jam_transformer.tokenizer import build_tokenizer
 

@@ -56,7 +56,7 @@ from typing import Optional
 
 import yaml
 
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 
 
 def _scrape_best_val_loss(csv_logger_root: Path, run_name: str) -> Optional[float]:

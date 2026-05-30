@@ -21,10 +21,10 @@ except ImportError:
 
 import torch
 
-from jam_transformer.audio import apply_dsp, audio_to_midi, record_from_mic, render_midi_to_wav
+from jam_transformer.utils.audio import apply_dsp, audio_to_midi, record_from_mic, render_midi_to_wav
 from jam_transformer.config import load_config
-from jam_transformer.logger import logger
-from jam_transformer.overrides import apply_overrides
+from jam_transformer.utils.logger import logger
+from jam_transformer.utils.overrides import apply_overrides
 from jam_transformer.pipeline import generate_accompaniment, load_checkpoint
 from jam_transformer.tokenizer import build_tokenizer
 
@@ -141,11 +141,6 @@ def main() -> None:
                       min_frequency=acfg.min_frequency,
                       max_frequency=acfg.max_frequency)
         args.melody_midi = str(transcribed_midi)
-    temperature = args.temperature if args.temperature is not None else icfg.temperature
-    top_k = args.top_k if args.top_k is not None else icfg.top_k
-    top_p = args.top_p if args.top_p is not None else icfg.top_p
-    max_new = args.max_new_tokens if args.max_new_tokens is not None else icfg.max_new_tokens
-
     if args.seed is not None:
         torch.manual_seed(args.seed)
 

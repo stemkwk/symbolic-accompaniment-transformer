@@ -1,4 +1,4 @@
-"""Loguru-based logger. Import as `from jam_transformer.logger import logger`.
+"""Loguru-based logger. Import as `from jam_transformer.utils.logger import logger`.
 
 `attach_file_sink(path)` mirrors all subsequent log records to a file so logs
 survive crashes / disconnected sessions on rented GPUs."""

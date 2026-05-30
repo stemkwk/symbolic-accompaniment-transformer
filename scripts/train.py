@@ -40,10 +40,10 @@ from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from jam_transformer.config import AppConfig, load_config
 from jam_transformer.dataset import JamTokenDataset, assert_data_matches_config
 from jam_transformer.lightning_module import JamTransformerLightning
-from jam_transformer.logger import attach_file_sink, logger
-from jam_transformer.overrides import apply_overrides
+from jam_transformer.utils.logger import attach_file_sink, logger
+from jam_transformer.utils.overrides import apply_overrides
 from jam_transformer.tokenizer import build_tokenizer
-from jam_transformer.utils import get_env_optimizations
+from jam_transformer.utils.hardware import get_env_optimizations
 
 
 # ---------------------------------------------------------------------------

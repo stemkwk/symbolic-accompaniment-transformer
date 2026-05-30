@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 
 
 def record_from_mic(out_wav: Path, sample_rate: int = 44100) -> None:
