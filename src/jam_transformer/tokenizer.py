@@ -323,91 +323,50 @@ class REMITokenizer(BaseTokenizer):
             self.token_to_id[tok] = len(self.id_to_token)
             self.id_to_token.append(tok)
 
+        def _add_range(prefix: str, iterable) -> "tuple[int, int]":
+            first = len(self.id_to_token)
+            for v in iterable:
+                _add(f"{prefix}_{v}")
+            return first, len(self.id_to_token) - 1
+
         # ---- Specials --------------------------------------------------------
         for t in (self.PAD, self.BOS, self.SEP, self.EOS):
             _add(t)
 
         # ---- Structure -------------------------------------------------------
         _add("BAR")
-        for i in range(cfg.positions_per_bar):
-            _add(f"POS_{i}")
-        tempo_first = len(self.id_to_token)
-        for i in range(cfg.tempo_bins):
-            _add(f"TEMPO_{i}")
-        tempo_last = len(self.id_to_token) - 1
+        _add_range("POS",   range(cfg.positions_per_bar))
+        self._tempo_min_id,   self._tempo_max_id   = _add_range("TEMPO",        range(cfg.tempo_bins))
 
         # ---- Tracks ----------------------------------------------------------
         for name in cfg.tracks:
             _add(f"TRACK_{name}")
 
         # ---- Pitch: CHROMA + OCTAVE (relative encoding) ----------------------
-        chroma_first = len(self.id_to_token)
-        for c in range(12):
-            _add(f"CHROMA_{c}")
-        chroma_last = len(self.id_to_token) - 1
-
-        octave_first = len(self.id_to_token)
-        for o in range(OCTAVE_MIN, OCTAVE_MAX + 1):
-            _add(f"OCTAVE_{o}")
-        octave_last = len(self.id_to_token) - 1
+        self._chroma_min_id,  self._chroma_max_id  = _add_range("CHROMA",       range(12))
+        self._octave_min_id,  self._octave_max_id  = _add_range("OCTAVE",       range(OCTAVE_MIN, OCTAVE_MAX + 1))
 
         # ---- Duration / Velocity ---------------------------------------------
-        dur_first = len(self.id_to_token)
-        for d in range(cfg.duration_min, cfg.duration_max + 1):
-            _add(f"DUR_{d}")
-        dur_last = len(self.id_to_token) - 1
-
-        vel_first = len(self.id_to_token)
-        for v in range(cfg.velocity_bins):
-            _add(f"VEL_{v}")
-        vel_last = len(self.id_to_token) - 1
+        self._dur_min_id,     self._dur_max_id     = _add_range("DUR",          range(cfg.duration_min, cfg.duration_max + 1))
+        self._vel_min_id,     self._vel_max_id     = _add_range("VEL",          range(cfg.velocity_bins))
 
         # ---- Harmony: SCALE_DEGREE + QUALITY + CHORD_N -----------------------
         n_q = min(len(CHORD_QUALITIES), max(1, cfg.chord_qualities))
         self._n_chord_qualities = n_q
 
-        sd_first = len(self.id_to_token)
-        for deg in range(12):
-            _add(f"SCALE_DEGREE_{deg}")
-        sd_last = len(self.id_to_token) - 1
-
-        quality_first = len(self.id_to_token)
-        for q_idx in range(n_q):
-            _add(f"QUALITY_{CHORD_QUALITIES[q_idx]}")
-        quality_last = len(self.id_to_token) - 1
+        self._sd_min_id,      self._sd_max_id      = _add_range("SCALE_DEGREE", range(12))
+        self._quality_min_id, self._quality_max_id = _add_range("QUALITY",      (CHORD_QUALITIES[i] for i in range(n_q)))
 
         _add("CHORD_N")
-        chord_n = len(self.id_to_token) - 1
+        self._chord_n_id = len(self.id_to_token) - 1
 
         # ---- Key token (optional) --------------------------------------------
         if cfg.use_key_tokens:
-            key_first = len(self.id_to_token)
-            for mode_str in KEY_MODES_STR:
-                for r in range(12):
-                    _add(f"KEY_{r}_{mode_str}")
-            key_last = len(self.id_to_token) - 1
-            self._key_min_id = key_first
-            self._key_max_id = key_last
+            self._key_min_id, self._key_max_id = _add_range(
+                "KEY", (f"{r}_{mode}" for mode in KEY_MODES_STR for r in range(12))
+            )
         else:
-            self._key_min_id = -1
-            self._key_max_id = -1
-
-        # Cache id ranges
-        self._tempo_min_id   = tempo_first
-        self._tempo_max_id   = tempo_last
-        self._chroma_min_id  = chroma_first
-        self._chroma_max_id  = chroma_last
-        self._octave_min_id  = octave_first
-        self._octave_max_id  = octave_last
-        self._dur_min_id     = dur_first
-        self._dur_max_id     = dur_last
-        self._vel_min_id     = vel_first
-        self._vel_max_id     = vel_last
-        self._sd_min_id      = sd_first
-        self._sd_max_id      = sd_last
-        self._quality_min_id = quality_first
-        self._quality_max_id = quality_last
-        self._chord_n_id     = chord_n
+            self._key_min_id = self._key_max_id = -1
 
     # ------------------------------------------------------------------
     # Properties
