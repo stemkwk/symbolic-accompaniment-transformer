@@ -12,8 +12,10 @@ Melody extraction
   Lakh:  --melody_method {weight,miner}     (default: weight)
   Slakh: --slakh_melody {instrument,miner,weight}  (default: instrument)
          'instrument' uses metadata.yaml inst_class labels (Synth Lead / Pipe /
-         Reed / Brass) — near-GT quality.  No fallback for missing melody-class
-         stems (those 27% of songs are skipped).
+         Reed / Brass) — near-GT quality.  Songs with no melody-class stem (~27%)
+         fall back to the shared Lakh selector: miner when --melody_method miner
+         is set, else the weight heuristic.  Sparse tracks are filtered by
+         min_melody_coverage in either case.
 
 Parallelism
 -----------
@@ -174,7 +176,8 @@ Examples:
     # Lakh melody extraction
     parser.add_argument("--melody_method", type=str, default="weight",
                         choices=["weight", "miner"],
-                        help="Melody track selector for Lakh (default: weight)")
+                        help="Melody selector for Lakh, and for the Slakh "
+                             "instrument-mode fallback (default: weight)")
     parser.add_argument("--miner_fallback", type=str, default="weight",
                         choices=["weight", "skip"],
                         help="When miner fails: 'weight' fallback or 'skip' (default: weight)")
@@ -299,7 +302,7 @@ Examples:
             )
         else:
             mm_models = None
-            if args.slakh_melody == "miner":
+            if args.slakh_melody == "miner" or args.melody_method == "miner":
                 logger.info("Loading midi-miner models …")
                 mm_models = _load_mm_models(Path(args.mm_models))
                 logger.info("  done.")

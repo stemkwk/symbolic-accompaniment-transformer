@@ -162,8 +162,9 @@ def _encode_slakh_one(
     """Encode one Slakh song. Chord: full 12-quality. Key: auto-estimate.
 
     slakh_melody choices:
-      'instrument' — use metadata.yaml inst_class (GT-quality); songs with no
-                     melody-class stem (27.3%) are skipped — no fallback.
+      'instrument' — use metadata.yaml inst_class (GT-quality). Songs with no
+                     melody-class stem (~27%) fall back to the shared
+                     miner/weight selector instead of being dropped.
       'miner'      — use midi-miner classifier via _lakh_track_events.
       'weight'     — use mono_rate weight heuristic via _lakh_track_events.
     """
@@ -182,12 +183,13 @@ def _encode_slakh_one(
             return None
         all_src = midis[0]
 
+    result = None
     if slakh_melody == "instrument":
+        # metadata.yaml inst_class labels (near-GT). Returns None when the song
+        # has no melody-class stem (~27%) — fall through to the shared selector.
         result = _slakh_instrument_events(song_dir, tokenizer.cfg)
-        if result is None:
-            return None  # no melody-class stem → skip, no fallback
-        events, tempo = result
-    else:
+
+    if result is None:
         result = _lakh_track_events(
             all_src, tokenizer.cfg,
             min_notes=min_stem_notes,
@@ -195,9 +197,9 @@ def _encode_slakh_one(
             min_melody_coverage=min_melody_coverage,
             chord_match_threshold=chord_match_threshold,
         )
-        if result is None:
-            return None
-        events, tempo = result
+    if result is None:
+        return None
+    events, tempo = result
 
     cond_track = cond_tracks[0] if cond_tracks else "melody"
     if min_melody_coverage > 0.0:
