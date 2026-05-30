@@ -99,7 +99,7 @@ def test_end_to_end_pipeline(tmp_path: Path):
     # 3) build a prompt MIDI from one synthetic song
     from scripts.prepare_data import _synthesize_song
     from jam_transformer.config import load_config
-    from jam_transformer.midi_io import events_to_midi
+    from jam_transformer.utils.midi_io import events_to_midi
     cfg = load_config(CONFIG_PATH)
     events, tempo, _kr, _km = _synthesize_song(seed=12345)
     melody = [e for e in events if e.track == "melody"]

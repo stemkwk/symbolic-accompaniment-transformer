@@ -26,7 +26,7 @@ tokenizer:
   tempo_min: 50
   tempo_max: 200
   # Track tags: "melody" = condition (input), "accompaniment" = target (generated).
-  # Interleaved format: both tracks are interleaved by time position (no SEP token).
+  # Interleaved format: both tracks are interleaved by time position, separated by SEP token.
   tracks: ["melody", "accompaniment"]
   # Maximum sequence length (after concatenating condition + target).
   # 2560: token_add_version Lakh preprocessing 기준값.
@@ -252,12 +252,17 @@ dsp:
   limiter_threshold_db: -1.0
 
 preprocessing:
-  # Songs whose melody coverage (fraction of bars with ≥1 melody note) falls
-  # below this threshold are excluded during prepare_data.py.
-  # Filters Lakh/Slakh tracks where the detected "melody" is actually a sparse
-  # solo/fill that provides almost no conditioning signal.
+  # Fraction of bars that must contain ≥1 melody note.
+  # Also used per-instrument in weight selection: sparse candidates are skipped.
   # 0.0 = disabled.
   min_melody_coverage: 0.20
+
+  # Chord template match score threshold (|active_pcs ∩ template| / |template|).
+  # Lower → more chords but more false positives; higher → fewer, more confident.
+  chord_match_threshold: 0.75
+
+  # Minimum notes per instrument to be considered as melody/accompaniment candidate.
+  min_stem_notes: 4
 
 audio_input:
   # Spectral noise reduction via noisereduce (applied before basic-pitch).

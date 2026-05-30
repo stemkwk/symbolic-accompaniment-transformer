@@ -1,0 +1,15 @@
+
+── Melody Selection Agreement: Weight vs midi-miner ──────────────────────
+Source     n_sample  n_valid  skipped   agree%   w_acc%   m_acc%
+----------------------------------------------------------------------
+POP909          200      191        9    93.2%    93.7%    98.4%
+Lakh            200      126       74    45.2%     N/A%     N/A%
+Slakh           200      147       53    46.9%     N/A%     N/A%
+----------------------------------------------------------------------
+
+agree%  = fraction of valid files where both methods pick the same track
+          (identity = note_count + median_pitch fingerprint)
+w_acc%  = weight method accuracy vs POP909 GT  (only POP909 row)
+m_acc%  = miner  method accuracy vs POP909 GT  (only POP909 row)
+
+Code comment reference accuracy: weight=94.6%, miner=95.8% (POP909 GT)

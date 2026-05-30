@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 import yaml
 
-from jam_transformer.logger import logger
+from jam_transformer.utils.logger import logger
 
 
 # ---------------------------------------------------------------------------
@@ -80,14 +80,27 @@ class ModelConfig:
 
 
 @dataclass
-@dataclass
 class PreprocessingConfig:
     """Controls offline data-preparation quality filters (prepare_data.py)."""
     # Fraction of bars that must contain at least one melody note.
     # Songs below this threshold are skipped entirely — their "melody" track is
     # typically a sparse solo/fill that barely conditions the accompaniment.
+    # Also used as the per-instrument coverage threshold in iterative weight
+    # selection: sparse candidates are bypassed in favour of the next ranked one.
     # 0.0 = disabled.  Recommended: 0.20.
     min_melody_coverage: float = 0.20
+
+    # Minimum score for a chord template match to be recorded in the chord map.
+    # Score = |active_pitch_classes ∩ template| / |template|.
+    # Lower → more chords detected but more false positives from passing tones.
+    # Higher → fewer but more confident chord labels.
+    # Recommended: 0.75.
+    chord_match_threshold: float = 0.75
+
+    # Minimum number of notes an instrument must have to be considered as a
+    # melody or accompaniment candidate (filters near-empty/decorative tracks).
+    # Recommended: 4.
+    min_stem_notes: int = 4
 
 
 @dataclass

@@ -19,6 +19,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+prepare = [
+    # MIDI preprocessing pipeline dependencies (scripts/prepare_data.py)
+    "pyyaml",                # Slakh metadata.yaml parsing
+    "numpy",                 # chord/key extraction
+    # midi-miner melody classifier (RandomForest, not on PyPI):
+    #   git clone https://github.com/ruiguo-bio/midi-miner
+    #   pip install -e ./midi-miner
+    # Its runtime deps (must match midi-miner/requirements.txt):
+    "coloredlogs",
+    "scikit-learn>=1.3",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "mido>=1.2",
+]
 train = [
     "pytorch-lightning>=2.2",  # LightningModule, Trainer, callbacks
     "wandb",                   # experiment tracking (optional but recommended)
