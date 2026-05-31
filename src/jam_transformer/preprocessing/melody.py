@@ -20,6 +20,11 @@ _DEFAULT_MM_MODELS = Path(r"C:\Users\hojun\mm_models")
 # (note_count, median_pitch_int) — stable across miditoolkit / PrettyMIDI
 _MinerFP = tuple[int, int]
 
+# Provenance of the most recent _lakh_track_events selection: "miner" / "weight".
+# Read by the encoder immediately after the call (safe: one file per process at a
+# time). Persisted into the shard so runs can report the miner/weight breakdown.
+_LAST_METHOD: "str | None" = None
+
 _MAX_BARS = 2000  # ~10 min at 120 BPM 4/4; guards against 32-bit tick overflow
 
 
@@ -190,6 +195,7 @@ def _lakh_track_events(
 
     # ── melody instrument selection ────────────────────────────────────────
     melody_inst = None
+    method = "weight"   # provenance; set to "miner" below if the miner picks it
 
     if mm_models is not None:
         fp = _miner_melody_fp(midi_path, mm_models)
@@ -198,6 +204,7 @@ def _lakh_track_events(
                 pitches = sorted(n.pitch for n in inst.notes)
                 if pitches and (len(pitches), pitches[len(pitches) // 2]) == fp:
                     melody_inst = inst
+                    method = "miner"
                     break
         if melody_inst is None:
             if miner_fallback == "skip":
@@ -230,4 +237,5 @@ def _lakh_track_events(
             track = cfg.tracks[-1]
         events.extend(_instrument_to_events(inst, track, cfg, tpb))
 
+    globals()["_LAST_METHOD"] = method
     return events, tempo_bpm

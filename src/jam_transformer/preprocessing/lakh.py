@@ -12,6 +12,7 @@ from jam_transformer.preprocessing.chords import (
     _extract_chords_from_midi, _estimate_key_from_midi, _MATCH_THRESHOLD,
 )
 from jam_transformer.preprocessing.melody import _lakh_track_events, _melody_coverage
+from jam_transformer.preprocessing import melody as _melody
 
 
 def _find_lakh_midis(root: Path) -> list[Path]:
@@ -87,5 +88,6 @@ def _encode_lakh_one(
         out_dir, raw_name, ids, mask,
         key_root=key_root if key_root is not None else -1,
         key_mode=key_mode if key_mode is not None else -1,
+        method=_melody._LAST_METHOD,
     )
     return raw_name

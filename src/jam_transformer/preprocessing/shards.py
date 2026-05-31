@@ -77,6 +77,7 @@ def _save_shard(
     mask: list[bool],
     key_root: int = -1,
     key_mode: int = -1,
+    method: "str | None" = None,
 ) -> None:
     torch.save(
         {
@@ -85,6 +86,7 @@ def _save_shard(
             "name":     name,
             "key_root": key_root,
             "key_mode": key_mode,
+            "method":   method,   # melody-selection provenance: miner/weight/instrument
         },
         out_dir / f"{name}.pt",
     )

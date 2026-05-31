@@ -17,6 +17,7 @@ from jam_transformer.preprocessing.melody import (
     _instrument_to_events,
     _MAX_BARS,
 )
+from jam_transformer.preprocessing import melody as _melody
 
 # inst_class values in Slakh metadata.yaml that indicate a melody instrument.
 # Synth Lead / Pipe (flute etc.) / Reed (sax, clarinet) / Brass (trumpet etc.)
@@ -184,6 +185,7 @@ def _encode_slakh_one(
         all_src = midis[0]
 
     result = None
+    method = "instrument"
     if slakh_melody == "instrument":
         # metadata.yaml inst_class labels (near-GT). Returns None when the song
         # has no melody-class stem (~27%) — fall through to the shared selector.
@@ -197,6 +199,7 @@ def _encode_slakh_one(
             min_melody_coverage=min_melody_coverage,
             chord_match_threshold=chord_match_threshold,
         )
+        method = _melody._LAST_METHOD   # "miner" / "weight" from the fallback
     if result is None:
         return None
     events, tempo = result
@@ -237,5 +240,6 @@ def _encode_slakh_one(
         out_dir, raw_name, ids, mask,
         key_root=key_root if key_root is not None else -1,
         key_mode=key_mode if key_mode is not None else -1,
+        method=method,
     )
     return raw_name
