@@ -89,12 +89,13 @@ augment:
   # Teaches the model to handle slightly stretched / shortened note lengths.
   # 1 bin ≈ ±1 sixteenth note (at resolution=4).
   duration_jitter_bins: 1
-  # Classifier-Free Guidance: with this probability, the melody section of a
-  # chunk is replaced with PAD tokens so the model also learns unconditional
-  # P(accompaniment).  The SEP token acts as the boundary marker.
-  # 0.05 = 5% of chunks are trained without melody → teaches robustness to
-  # silent/absent melody input at inference time.
-  condition_dropout_prob: 0.05
+  # Classifier-Free Guidance: with this probability, ALL melody/condition tokens
+  # of a chunk (every bar-block, not just the first) are replaced with PAD so the
+  # model learns a true unconditional P(accompaniment). Enables CFG (w>1) at
+  # inference (cond vs uncond logit blend). 0.075 = a usable unconditional mode
+  # without sacrificing melody-following; the data's natural melody-silent
+  # passages (intros/breaks) already supply some unconditional exposure.
+  condition_dropout_prob: 0.075
 
 training:
   # Base batch size before VRAM-tier scaling (env_scaling.tiers multiplies this).
@@ -145,16 +146,18 @@ training:
   # ------------------------------------------------------------------
   # Source-balanced sampling (WeightedRandomSampler, no data discarded)
   # ------------------------------------------------------------------
-  # Natural distribution (actual shard counts): lakh≈90.3%, pop909≈4.9%, slakh≈4.7%.
+  # Natural distribution (train chunk counts, 2026-05-31 post-Slakh-redux):
+  #   lakh≈89.0%, slakh≈8.2%, pop909≈2.8%  (shards 15897 / 1355 / 909).
   # Target effective distribution: lakh=55%, slakh=40%, pop909=5%.
   # Weights back-calculated as: w_i = target_i / natural_i, normalised so max=1.0.
   # Priority: Slakh (professional, highest harmonic quality) > Lakh (diverse western)
   #           > POP909 (clean pairs but all Chinese pop → genre/harmonic bias).
-  # Per-epoch exposure: slakh ×8.5 / pop909 ×1.0 (natural rate) / lakh ×0.61
+  # Per-epoch exposure: slakh ×4.9 / pop909 ×1.8 / lakh ×0.62  (Slakh redux tripled
+  #   the unique-song count, so the old ×8.5 over-repetition is now a healthier ×4.9.)
   # Set all to 1.0 to disable (uniform / natural distribution).
-  source_weight_pop909: 0.1199
+  source_weight_pop909: 0.3732
   source_weight_slakh:  1.0
-  source_weight_lakh:   0.0716
+  source_weight_lakh:   0.1270
   # Song-level train/val split: 20% of songs held out for validation.
   # Deterministic SHA-256 hash of shard filename — stable across re-runs.
   # 0.0 = legacy stride-only split (all songs in both train and val).

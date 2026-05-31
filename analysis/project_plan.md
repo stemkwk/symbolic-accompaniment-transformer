@@ -70,22 +70,22 @@
 - ⚠️ 경고: midi-miner 모델 sklearn 1.3.0 pickle ↔ 환경 1.8.0 (`InconsistentVersionWarning`).
   진단 때와 동일 조건이라 일관성은 유지됨
 
-## 🔄 진행 중
+## ✅ 완료 (Slakh redux 재전처리, 2026-05-31 20:43)
 
-- **Slakh redux 다운로드** (Colab → gdrive, 자기 전 실행 예정, ~50분 @ 35MB/s)
+- Colab 스트리밍으로 redux 1,710곡 MIDI 다운로드 → 로컬 전처리 (~9분, num_workers 4)
+- **method 로깅 추가** (shard `method` 필드 + `scripts/analysis/melody_method_stats.py`)
+- 옛 버그 Slakh 435 삭제 → **saved 1,355 / skipped 355** (3배↑)
+  - instrument(GT) 862 / miner 338 / weight 155 — fallback 중 miner 68.6% (Lakh와 일관)
+- 클린 재인덱싱: **`{pop909: 909, lakh: 15897, slakh: 1355}` = 18,161 shard**
 
 ---
 
 ## ⏳ 앞으로 할 일
 
-### 1. 데이터 확정
-- [x] Lakh 재전처리 완료 (15,897 saved, 인덱스 합쳐짐)
-- [ ] Slakh redux tar를 gdrive에서 받아 `data/raw/slakh2100_redux`에 풀기
-- [ ] **기존 버그 Slakh shard 435개 삭제** (`data/processed/slakh_*.pt`) — 새 경로는 해시가
-  달라 fast-skip 안 되므로, 안 지우면 옛 버그본 + 새 shard가 섞임
-- [ ] **Slakh 재전처리** (fixed 코드):
-  `--slakh_dir data/raw/slakh2100_redux --slakh_melody instrument --melody_method miner --miner_fallback weight --num_workers 8`
-- [ ] `_chunk_index.json` 정합성: `{pop909, slakh, lakh}` 3종 다 포함 확인 (재빌드됨)
+### 1. 데이터 확정 — ✅ 완료
+- [x] Lakh 재전처리 (15,897)
+- [x] Slakh redux 다운로드 → 재전처리 (1,355, instrument/miner/weight 로깅)
+- [x] 옛 버그 Slakh 삭제 + 클린 재인덱싱 → `{pop909, lakh, slakh}` = 18,161 shard
 
 ### 2. 학습 전 검증 (빌린 GPU 가기 전)
 - [ ] `train.py --dry_run_steps 50` → ms/step·peak VRAM·초기 loss(≈ln 173 ≈ 5.15) +

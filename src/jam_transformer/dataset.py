@@ -257,7 +257,8 @@ class JamTokenDataset(Dataset):
     # ------------------------------------------------------------------
     # Augmentation — relative encoding version
     # ------------------------------------------------------------------
-    def _augment(self, ids: torch.Tensor, key_root: int = 0) -> torch.Tensor:
+    def _augment(self, ids: torch.Tensor, key_root: int = 0,
+                 target_mask: "torch.Tensor | None" = None) -> torch.Tensor:
         """Apply train-time augmentations.
 
         1. **Pitch transposition** (pitch_transpose_semitones):
@@ -363,15 +364,31 @@ class JamTokenDataset(Dataset):
                 ids[dur_pos] = (ids[dur_pos] + deltas).clamp(dmin, dmax)
 
         # ---- 5. Condition dropout (CFG) ------------------------------------
+        # When it fires, blank the ENTIRE melody condition so the model learns a
+        # true unconditional mode — this keeps inference-time CFG (cond vs uncond)
+        # in-distribution. NOTE: chunks contain multiple [melody]→SEP→[acc] blocks;
+        # the previous version padded only the first block, leaving later blocks'
+        # melody intact (never trained a fully-unconditional chunk).
         p_drop = float(getattr(aug, "condition_dropout_prob", 0.0) or 0.0)
         if p_drop > 0.0 and _r.random() < p_drop:
-            sep_id  = self.tokenizer.sep_id
-            sep_pos = (ids == sep_id).nonzero(as_tuple=False)
-            if sep_pos.numel() > 0:
-                sep_idx = int(sep_pos[0].item())
-                if sep_idx > 1:
+            pad_id = self.tokenizer.pad_id
+            sep_id = self.tokenizer.sep_id
+            if target_mask is not None:
+                # PAD every condition token (mask==0) across all blocks; keep the
+                # BOS + SEP boundaries and all accompaniment (mask==1) untouched.
+                drop = (~target_mask.bool()) & (ids != sep_id) & (ids != self.tokenizer.bos_id)
+                if bool(drop.any()):
                     ids = ids.clone()
-                    ids[1:sep_idx] = self.tokenizer.pad_id
+                    ids[drop] = pad_id
+            else:
+                # Legacy fallback (mask unavailable, e.g. inspect_data preview):
+                # pad only the first block's melody.
+                sep_pos = (ids == sep_id).nonzero(as_tuple=False)
+                if sep_pos.numel() > 0:
+                    sep_idx = int(sep_pos[0].item())
+                    if sep_idx > 1:
+                        ids = ids.clone()
+                        ids[1:sep_idx] = pad_id
 
         return ids
 
@@ -401,7 +418,7 @@ class JamTokenDataset(Dataset):
         kr = key_root if key_root >= 0 else 0  # fallback C when unknown
 
         if self.train:
-            ids = self._augment(ids, key_root=kr)
+            ids = self._augment(ids, key_root=kr, target_mask=target_mask)
 
         pad_id = self.tokenizer.pad_id
         cur = ids.shape[0]
