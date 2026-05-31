@@ -217,6 +217,13 @@ def generate_accompaniment(
         header_ids.append(tokenizer.key_token_id(kr, key_mode or 0))
     header_ids.append(tokenizer.tid(f"TEMPO_{tokenizer.tempo_bin(tempo)}"))  # type: ignore[attr-defined]
 
+    # CFG: run a parallel UNconditional branch whose melody/condition is PADded
+    # (BOS+SEP kept), matching training condition-dropout. Each step blends:
+    #   guided = uncond + cfg_w * (cond - uncond).   cfg_w == 0 disables it.
+    use_cfg = cfg_w is not None and cfg_w > 0.0
+    pad_id = tokenizer.pad_id
+    header_ids_u: list[int] = [header_ids[0]] + [pad_id] * (len(header_ids) - 1)
+
     model_max = getattr(cfg.model, "max_seq_len", 4096)
 
     # Arbitrary-length default: when the caller does not cap generation, the
@@ -296,13 +303,22 @@ def generate_accompaniment(
     # 5. Step helper (single forward, returns last-position logits)
     # ------------------------------------------------------------------ #
     @torch.no_grad()
-    def _step(tok_ids: list[int], kv_caches):
+    def _step(tok_ids: list[int], kv_caches, uncond_ids: list[int] | None = None):
+        if use_cfg and uncond_ids is not None:
+            # Batch row 0 = conditional, row 1 = unconditional; blend last logits.
+            t = torch.tensor([tok_ids, uncond_ids], dtype=torch.long, device=device)
+            logits, new_caches = lit.model(t, kv_caches=kv_caches)
+            lc = logits[0:1, -1, :]
+            lu = logits[1:2, -1, :]
+            return lu + cfg_w * (lc - lu), new_caches
         t = torch.tensor([tok_ids], dtype=torch.long, device=device)
         logits, new_caches = lit.model(t, kv_caches=kv_caches)
         return logits[:, -1, :], new_caches
 
-    last_logits, kv_caches = _step(header_ids, None)
     all_ids: list[int] = list(header_ids)
+    all_ids_u: list[int] = list(header_ids_u)   # parallel uncond history (CFG only)
+    last_logits, kv_caches = _step(header_ids, None,
+                                   header_ids_u if use_cfg else None)
     generated_count = 0
     done = False
 
@@ -315,10 +331,14 @@ def generate_accompaniment(
         single fresh forward. This re-rotates every kept key at in-range RoPE
         positions (naively truncating pre-rotated keys would corrupt relative
         positions) and yields the next-token logits for the latest token.
+        Under CFG the unconditional branch is rebuilt in lockstep.
         """
         if kv_caches is None or kv_caches[0][0].shape[2] <= ctx_window:
             return last_logits, kv_caches
         window_ids = header_ids + all_ids[-ctx_keep:]
+        if use_cfg:
+            window_ids_u = header_ids_u + all_ids_u[-ctx_keep:]
+            return _step(window_ids, None, window_ids_u)
         return _step(window_ids, None)
 
     # ------------------------------------------------------------------ #
@@ -345,7 +365,13 @@ def generate_accompaniment(
                     forced.extend(_note_to_tokens(e, tokenizer, kr))
         forced.append(sep_id)
         all_ids.extend(forced)
-        last_logits, kv_caches = _step(forced, kv_caches)
+        if use_cfg:
+            # uncond: PAD the whole forced melody block, keep only the SEP boundary
+            forced_u = [pad_id] * (len(forced) - 1) + [sep_id]
+            all_ids_u.extend(forced_u)
+            last_logits, kv_caches = _step(forced, kv_caches, forced_u)
+        else:
+            last_logits, kv_caches = _step(forced, kv_caches)
         last_logits, kv_caches = _maybe_slide(last_logits, kv_caches)
 
         # ---- Generate accompaniment for this block ----------------------
@@ -386,8 +412,10 @@ def generate_accompaniment(
                     # internal bar of a multi-bar block → keep it, advance
                     acc_bars_seen += 1
                     all_ids.append(next_id)
+                    if use_cfg: all_ids_u.append(next_id)
                     generated_count += 1
-                    last_logits, kv_caches = _step([next_id], kv_caches)
+                    last_logits, kv_caches = _step(
+                        [next_id], kv_caches, [next_id] if use_cfg else None)
                     last_logits, kv_caches = _maybe_slide(last_logits, kv_caches)
                     continue
                 # block's accompaniment finished → discard this BAR, next block
@@ -398,8 +426,10 @@ def generate_accompaniment(
                 break
 
             all_ids.append(next_id)
+            if use_cfg: all_ids_u.append(next_id)
             generated_count += 1
-            last_logits, kv_caches = _step([next_id], kv_caches)
+            last_logits, kv_caches = _step(
+                [next_id], kv_caches, [next_id] if use_cfg else None)
             last_logits, kv_caches = _maybe_slide(last_logits, kv_caches)
             if generated_count >= max_new:
                 done = True
