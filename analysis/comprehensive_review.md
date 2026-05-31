@@ -1,5 +1,9 @@
 # 🕵️ Symbolic Jam Transformer: Comprehensive Project Audit & Review Report
 
+> ⚠️ **2026-05-31 기준 — 2026-05-26 시점 감사 스냅샷.** 여기 "제안 중"으로 적힌 다수 항목이 이후
+> 반영되었습니다 (예: Static KV/RoPE 제외하고 대부분). 최신 상태는 [`project_plan.md`](project_plan.md),
+> 검증 현황은 [`post_training_verification.md`](post_training_verification.md) 참조.
+
 본 보고서는 **Symbolic Jam Transformer** 프로젝트의 전체 설계와 구현에 대한 종합적인 아키텍처 감사 및 검수 보고서입니다. 이전 단계에서 수정 완료된 내역을 바탕으로, 모델의 구조적 한계점, 추가적으로 확인해야 할 잠재적 오류 요인, 성능 최적화 대안, 학술적/실무적 고려사항 및 최종 학습 전 점검 항목을 기술합니다.
 
 ---

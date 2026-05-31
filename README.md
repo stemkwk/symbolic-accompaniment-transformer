@@ -81,18 +81,23 @@ $$\mathbf{L}_{\text{next}}[\mathbf{I}_{\text{struct}}] \leftarrow \mathbf{L}_{\t
 
 ---
 
-### C. 분류기 없는 가이드라인 (Classifier-Free Guidance, CFG)
+### C. 분류기 없는 가이드라인 (Classifier-Free Guidance, CFG) — ✅ 구현됨
 
-> **[현재 브랜치 제약]** Temporal Interleaving 포맷에서는 CFG 추론 가중치($w > 1.0$)가 지원되지 않습니다. `condition_dropout_prob`은 추론 견고성을 위한 학습 기법으로만 사용됩니다. 자세한 설계 이유는 [analysis/branch_design_changes.md](analysis/branch_design_changes.md)를 참고하세요.
+Temporal Interleaving 포맷에서도 CFG를 **추론 시점에 지원**합니다 (이전엔 미지원으로 분류됐으나 구현 완료).
 
-* **학습 시**: `condition_dropout_prob: 0.05` 확률로 멜로디 조건 토큰을 패딩(`<PAD>`)으로 교체하여 무조건부 배포 $P(\text{accom})$와 조건부 배포 $P(\text{accom} \mid \text{melody})$를 동시에 학습합니다. 멜로디가 없는 인트로/아웃트로 구간에서도 견고하게 생성이 가능해집니다.
-* **추론 시 (설계 참고용)**: 두 갈래의 예측값(Logits)을 결합 가중치 $w$로 선형 결합하는 방식입니다.
+* **학습 시**: `condition_dropout_prob: 0.075` 확률로 **한 청크의 모든 블록 멜로디**를 `<PAD>`로 교체하여 무조건부 배포 $P(\text{accom})$와 조건부 배포 $P(\text{accom} \mid \text{melody})$를 함께 학습합니다. (과거엔 첫 블록만 PAD하는 버그가 있었으나 전체 블록 PAD로 수정 → 진짜 무조건부 모드 학습.)
+* **추론 시**: `generate_accompaniment`이 멜로디를 PAD한 무조건부 분기를 cond와 한 배치(2-row)로 동시에 forward하여 logits를 블렌딩합니다 (`cfg_w` 파라미터, app 슬라이더).
 
 $$\mathbf{L}_{\text{cfg}} = \mathbf{L}_{\text{uncond}} + w \times (\mathbf{L}_{\text{cond}} - \mathbf{L}_{\text{uncond}})$$
 
-* **가이드라인 강도($w$) 영향** (SEP-분리형 포맷에서 유효):
-  * `w = 0.0` 또는 `1.0`: 기본 조건부 생성.
-  * `w > 1.0` (주로 1.5~3.0): 멜로디 화성·박자 구조에 반주가 엄격하게 밀착하여 생성됩니다.
+* **가이드라인 강도($w$, `cfg_w`)**:
+  * `w = 0.0`: 비활성 (단일 분기, 추론 비용 1×).
+  * `w = 1.0`: 기본 조건부와 동일.
+  * `w > 1.0` (주로 1.5~3.0): 멜로디 화성·박자에 반주가 더 강하게 밀착. (cond+uncond 동시 forward로 추론 2×)
+
+### C-2. 화성 기피음 소프트 페널티 (Avoid-note Soft Penalty) — ✅ 구현됨
+
+재학습 없이 추론 시점에 화성 충돌을 억제합니다. 모델이 생성한 코드(SCALE_DEGREE+QUALITY)를 실시간 추적하여, 그에 대한 **기피음**(예: 메이저 3도 위의 11음)에 해당하는 `CHROMA` logit을 부드럽게 감점합니다 (`avoid_note_penalty`, app 슬라이더). Hard mask가 아니라 soft penalty라 텐션·경과음 같은 색채음은 보존됩니다.
 
 ---
 
@@ -355,7 +360,7 @@ class MySuperTokenizer(BaseTokenizer):
 * **회귀 붕괴 극복**: 기존 cGAN 스펙트로그램 직접 매핑 모델의 One-to-Many 모호성으로 인한 흐릿한(blurry) 평균치 수렴 붕괴를 극복하고, 심볼릭 토큰 크로스 엔트로피 분류 체계로 선명하고 정확한 화성을 작곡합니다.
 * **초경량 최적화**: 수억~수십억 파라미터를 소모하는 EnCodec 기반 오디오 토큰 모델(MusicGen 등)과 달리, 단 **38M 파라미터**의 정제된 Transformer 아키텍처를 구현하고 RoPE 및 Gradient Checkpointing을 결합하여 무료 Colab GPU(T4) 혹은 저사양 로컬 환경에서 단 2-3시간 만에 고속 학습 수렴이 가능하게 만들었습니다.
 * **토큰 무결성 검사**: 전처리 시 `_dataset_meta.json`에 기록된 토크나이저 해시값(Fingerprint)을 로딩 즉시 대조함으로써, 설정 drift로 인한 학습 오류 및 CUDA 충돌 문제를 100% 미연에 차단합니다.
-* **소스 균형 샘플링 (Source-Balanced Sampling)**: 자연 분포(Lakh 90.3% / Slakh 4.7% / POP909 4.9%)를 목표 분포(Lakh 55% / Slakh 40% / POP909 5%)로 재조정하는 `WeightedRandomSampler`를 도입했습니다. 전문 편곡 품질의 Slakh를 자연 비율 대비 **8.5배 오버샘플링**하여 화음 품질을 향상시키고, 중국 팝 장르 편향이 있는 POP909의 비율은 자연 비율로 고정합니다.
+* **소스 균형 샘플링 (Source-Balanced Sampling)**: 자연 분포(현재 chunk 기준 Lakh ≈89% / Slakh ≈8% / POP909 ≈3%, 셔드 15,897 / 1,355 / 909)를 목표 분포(Lakh 55% / Slakh 40% / POP909 5%)로 재조정하는 `WeightedRandomSampler`를 도입했습니다. 전문 편곡 품질의 Slakh를 **약 4.9배 오버샘플링**(redux 1,710곡 도입으로 과거 ×8.5보다 반복이 줄어 건강해짐)하여 화음 품질을 높이고, 중국 팝 장르 편향이 있는 POP909는 낮게 고정합니다. 가중치는 데이터 분포 변화에 맞춰 재계산됩니다(`source_weight_*`).
 
 ### C. 냉정한 한계점 (Limitations)
 * **음원 합성 품질의 사운드폰트 의존성**: 물리적 오디오를 생성하지 않고 작곡 기호(MIDI)를 출력하기 때문에, 최종 WAV의 음질 및 Realism이 로드된 외부 사운드폰트(`.sf2`)의 음색에 절대적으로 종속됩니다.
@@ -379,13 +384,19 @@ class MySuperTokenizer(BaseTokenizer):
 | **어휘 크기** | 174 토큰 (TRACK_bridge 포함) | 173 토큰 |
 | **최대 시퀀스 길이** | 2048 토큰 | 2560 토큰 |
 | **다성부 제어 전략** | `structural_suppression: 1.5` (추론 시 항상 활성) | `polyphony_loss_boost: 2.0` (학습으로 근본 해결); `structural_suppression: 0.0` (비활성) |
-| **CFG 추론** | 지원 (`condition_dropout_prob: 0.15`) | 인터리빙 포맷에서 미지원; dropout은 견고성 학습용 (`0.05`) |
-| **데이터 샘플링** | 균등 (자연 분포) | `WeightedRandomSampler`: Slakh ×8.5 / Lakh ×0.61 / POP909 ×1.0 |
+| **CFG 추론** | 지원 (`condition_dropout_prob: 0.15`) | ✅ 지원 (cond/uncond 2-row 블렌딩 `cfg_w`); dropout `0.075` (전체 블록 PAD) |
+| **데이터 샘플링** | 균등 (자연 분포) | `WeightedRandomSampler`: Slakh ×4.9 / Lakh ×0.62 / POP909 ×1.8 (목표 55/40/5) |
 | **Train/Val 분할** | 스트라이드 기반 인덱스 | SHA-256 곡 단위 분할 (`val_ratio: 0.2`, 데이터 누수 차단) |
 | **Checkpoint 주기** | 100 steps (I/O 병목) | 1000 steps |
 | **멜로디 밀도 필터** | 없음 | `min_melody_coverage: 0.20` (저커버리지 곡 자동 제거) |
 
 ---
-**최종 업데이트:** 2026-05-26  
+> **2026-05-31 갱신 요약**: 데이터 재전처리(Slakh redux 1,710 → 18,161 shard), Slakh 멜로디 추출
+> 캐스케이드(instrument GT → miner → weight), 소스 가중치 55/40/5 재교정, condition-dropout 전체
+> 블록 PAD 수정(0.075), **CFG 추론 구현**(`cfg_w`), **avoid-note soft penalty**(`avoid_note_penalty`),
+> RAM 티어 LRU 셔드 캐시. 위 §3 파일 트리는 utils/·preprocessing/ 서브패키지 분리 및 scripts/tools·
+> scripts/analysis 재배치 *이전* 기준이라 일부 경로가 옛 위치입니다.
+
+**최종 업데이트:** 2026-05-31  
 **프로젝트 주제:** 상징적 피아노 반주 생성을 위한 디코더 트랜스포머 및 추론 성능 고도화 시스템  
 

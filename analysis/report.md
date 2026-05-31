@@ -1,5 +1,9 @@
 # 📊 Symbolic Jam Transformer: Comprehensive Project Analysis (v4)
 
+> ⚠️ **2026-05-31 기준 — 이 문서는 2026-05-26 시점 스냅샷입니다.** 이후 데이터 재전처리(redux
+> Slakh, 18,161 shard), 소스 가중치 55/40/5, condition-dropout 수정, CFG·avoid-note penalty,
+> RAM 티어 캐시 등이 추가되었습니다. **현재 진행 상황의 단일 출처는 [`project_plan.md`](project_plan.md)** 입니다.
+
 본 보고서는 **Symbolic Jam Transformer** 프로젝트의 코드베이스와 설정을 분석하여 구조적 한계점, 논리적 버그, 그리고 학습/추론 성능을 향상시키기 위한 최적화 및 개선 적용 경과를 종합 정리한 문서입니다.
 
 이 문서는 프로젝트 검수용 종합 보고서이며, 분야별 세부 분석 및 구체적인 교정 코드는 프로젝트 루트 폴더 `analysis/` 아래의 개별 파일로 분할하여 기록해 두었습니다. 다른 코드 편집 에이전트가 각 개별 파일을 전달받아 잔여 제안 사항 수정을 직접 수행할 수 있습니다.

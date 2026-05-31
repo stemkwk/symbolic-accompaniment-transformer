@@ -65,23 +65,14 @@
       return arr.astype(np.float32)
   ```
 
-### B. Windows 로컬 환경 구동 시 `torch.compile` 지연
-* **위치**: `configs/config.yaml` L63 (`compile: true`)
-* **상황**: 설정 파일에 컴파일 활성화가 디폴트로 박혀 있습니다.
-* **잠재적 에러**: Windows 환경에서는 MSVC/MinGW C++ 컴파일러 미비로 컴파일을 시도하다 에러를 내며 실패하거나(eager mode 폴백), 최초 구동 시 3~5분 이상의 심각한 지연(Lag)을 초래합니다.
-* **대책**: Windows 로컬 구동 시에는 CLI 오버라이드 옵션(`--set model.compile=false`)을 주어 명시적으로 컴파일을 끄고 실행하는 것이 디버깅 속도를 향상시킵니다.
+### B. Windows 로컬 환경 구동 시 `torch.compile` 지연 — ✅ 반영됨
+* **위치**: `configs/config.yaml` (`model.compile`)
+* **현재 상태**: 기본값이 **`compile: false`** 로 설정되어 있어 Windows 로컬에서 안전합니다 (과거 `true` 기본값에서 변경됨). MSVC/MinGW 미비로 인한 컴파일 실패·3~5분 지연이 기본 경로에서 발생하지 않습니다.
+* **참고**: Linux 서버에서 20~30% 가속을 원하면 `--set model.compile=true`로 명시적 활성화.
 
-### C. 중간 저장(Checkpointing) 주기 및 Early Stopping 임계치 적절성 분석
-* **위치**: `configs/config.yaml` L180 (`checkpoint_every_n_train_steps`), L187 (`early_stopping_patience`)
-* **분석 및 문제점**:
-  1. **체크포인트 저장 주기 (100 steps) 병목**: 
-     - 본 모델(38M params)은 옵티마이저(AdamW) 상태를 포함하여 체크포인트 1회 저장 시 **약 400~450MB**의 디바이스 데이터를 디스크에 기록합니다.
-     - 고성능 GPU(RTX 4090/A100) 기준 1 step은 30~50ms 내외이므로, 100 steps는 **단 3~5초**에 해당합니다. 
-     - 3초마다 450MB의 대용량 쓰기가 반복되면 심각한 하드디스크 I/O 병목이 발생하여 실제 학습 스루풋(Throughput)이 5배 이상 저하됩니다.
-     - **대책**: Spot 인스턴스 crash guard 목적이라 하더라도 저장 단계를 **`500` 또는 `1000` steps**로 변경하거나 로컬 디스크 속도가 보장되지 않으면 비활성화(`0`)할 것을 강력히 권장합니다.
-  2. **Early Stopping 인내치 (10 epochs) 최적화 제안**:
-     - 기존의 `patience: 15`는 다소 길어 학습 중단 반응이 느릴 수 있습니다. **`patience: 10`으로 단축 조정하는 것이 시간 및 GPU 과금 방지 측면에서 대단히 훌륭한 타협점**입니다.
-     - 코사인 Warmup이 완료된 이후 10 에폭 동안 검증 손실이 개선되지 않는다면 모델이 완전히 정체(Plateau)했거나 오버피팅이 발생했다고 판단하기에 충분한 윈도우 크기입니다.
-     - **대책**: `patience`를 `10`으로 낮출 경우, 학습 시작 초기(웜업 구간)에 조기 종료되는 오작동을 막기 위해 최소 유예 에폭 설정인 **`early_stopping_min_epochs` 역시 동일하게 `10`으로 맞추어 조율**해주어야 의도대로 최단 지점에서 자동 정지됩니다.
-       * *실행 옵션*: `--set training.early_stopping_patience=10 --set training.early_stopping_min_epochs=10`
+### C. 중간 저장(Checkpointing) 주기 및 Early Stopping 임계치 — ✅ 반영됨
+* **위치**: `configs/config.yaml` (`checkpoint_every_n_train_steps`, `early_stopping_patience`, `early_stopping_min_epochs`)
+* **현재 상태**: 아래 권장안이 모두 config에 반영되어 있습니다.
+  1. **체크포인트 주기**: **`1000` steps** (과거 100 → I/O 병목 회피). 38M 모델 + AdamW 상태 1회 저장 ≈ 400~450MB이므로 100 steps(약 3~5초)마다 쓰면 스루풋 급락 → 1000으로 조정 완료.
+  2. **Early Stopping**: **`patience: 10` + `early_stopping_min_epochs: 10`** (과거 15 → 시간·과금 절감). warmup 이후 10 epoch 정체면 plateau/overfit 판단 충분. min_epochs를 동일하게 맞춰 웜업 구간 조기종료 오작동도 방지.
 

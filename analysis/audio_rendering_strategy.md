@@ -19,7 +19,7 @@
 
 ### [Phase 2] Python 기반 오디오 후처리 (구현 완료)
 *   **핵심 도구**: **`Pedalboard`** (Spotify 개발 라이브러리)
-*   **현 상태**: `src/jam_transformer/audio.py` 내의 `apply_dsp` 함수 및 `config.yaml` 의 `dsp` 섹션으로 **구현이 완료**되었습니다.
+*   **현 상태**: `src/jam_transformer/utils/audio.py` 내의 `apply_dsp` 함수 및 `config.yaml` 의 `dsp` 섹션으로 **구현이 완료**되었습니다.
 *   **적용 효과**:
     1.  **Reverb**: 스테레오 공간감(Room size, Damping, Wet level 등)을 가변적으로 추가하여 건조함 제거.
     2.  **Compressor**: 소리의 밀도와 다이내믹 레인지를 압축하여 단단한 사운드 구현.
@@ -27,7 +27,7 @@
 
 ### [Phase 3] VST 호스팅 및 Humanization
 *   **Humanization (구현 완료)**:
-    *   `src/jam_transformer/midi_io.py` 내의 `humanize_midi` 함수 및 `config.yaml` 의 `humanize` 섹션으로 **구현이 완료**되었습니다.
+    *   `src/jam_transformer/utils/midi_io.py` 내의 `humanize_midi` 함수 및 `config.yaml` 의 `humanize` 섹션으로 **구현이 완료**되었습니다.
     *   노트의 start/end 타이밍 및 velocity에 가우시안 노이즈(Jitter)를 가해 기계적인 연주 느낌을 획기적으로 줄였습니다.
 *   **VST 호스팅 (추후 과제)**:
     *   **핵심 도구**: **`Dawdreamer`** (Python VST Host)
