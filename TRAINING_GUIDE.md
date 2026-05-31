@@ -123,7 +123,7 @@ WANDB_NAME=my-training-run   # W&B에서 보이는 실험 이름 (자유롭게)
 
 ### HF_TOKEN (Slakh 데이터셋 다운로드 시에만 필요)
 
-`download_slakh.py` 를 실행할 때 HuggingFace 인증이 필요합니다.  
+`scripts/tools/download_slakh.py` 를 실행할 때 HuggingFace 인증이 필요합니다.  
 **Releases에서 `jam_data_processed.zip`을 받았다면 이 항목은 건너뛰어도 됩니다.**
 
 **발급 방법:**
@@ -205,17 +205,17 @@ GPU: NVIDIA GeForce RTX 4060 Ti
 
 ```powershell
 # POP909 (~수십 MB, 10~20분)
-docker compose run --rm train python scripts/download_pop909.py --out_dir data/raw/POP909
+docker compose run --rm train python scripts/tools/download_pop909.py --out_dir data/raw/POP909
 docker compose run --rm train python scripts/prepare_data.py `
   --pop909_dir data/raw/POP909 --out_dir data/processed
 
 # Lakh (수 GB, 1~수 시간)
-docker compose run --rm train python scripts/download_lakh.py --out_dir data/raw/lmd_clean
+docker compose run --rm train python scripts/tools/download_lakh.py --out_dir data/raw/lmd_clean
 docker compose run --rm train python scripts/prepare_data.py `
   --lakh_dir data/raw/lmd_clean --out_dir data/processed
 
 # Slakh (~96MB, 30분~1시간) — HF_TOKEN 필요
-docker compose run --rm train python scripts/download_slakh.py --out_dir data/raw/slakh2100
+docker compose run --rm train python scripts/tools/download_slakh.py --out_dir data/raw/slakh2100
 docker compose run --rm train python scripts/prepare_data.py `
   --slakh_dir data/raw/slakh2100 --out_dir data/processed
 ```
