@@ -87,6 +87,16 @@
 - [x] Slakh redux 다운로드 → 재전처리 (1,355, instrument/miner/weight 로깅)
 - [x] 옛 버그 Slakh 삭제 + 클린 재인덱싱 → `{pop909, lakh, slakh}` = 18,161 shard
 
+### 1b. 학습 설정 — ✅ 완료 (A)
+- [x] condition dropout 전체 블록 PAD 수정 (CFG 전제조건, `f220474`)
+- [x] `condition_dropout_prob` 0.05 → 0.075
+- [x] 소스 가중치 55/40/5 재교정 (`0.127/1.0/0.3732`)
+
+### 1c. 추론 제어 기능 — ✅ 완료 (B, 재학습 불필요)
+- [x] CFG (cfg_w) — pipeline 병렬 분기 + app 슬라이더 (`9890bda`)
+- [x] avoid-note soft penalty — quality별 테이블 + app 슬라이더 (`b84ed4e`)
+- [ ] (학습 후) 실제 체크포인트로 CFG·penalty 음악적 검증 — 현재는 로직/스모크만
+
 ### 2. 학습 전 검증 (빌린 GPU 가기 전)
 - [ ] `train.py --dry_run_steps 50` → ms/step·peak VRAM·초기 loss(≈ln 173 ≈ 5.15) +
   `assert_data_matches_config` 통과
