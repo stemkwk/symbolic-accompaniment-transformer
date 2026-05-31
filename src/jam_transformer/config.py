@@ -31,7 +31,7 @@ class TokenizerConfig:
     tempo_min: int = 50
     tempo_max: int = 200
     tracks: List[str] = field(default_factory=lambda: ["melody", "accompaniment"])
-    max_seq_len: int = 2048
+    max_seq_len: int = 2560
     # ------------------------------------------------------------------
     # Temporal interleaving block size (bar-block format)
     # ------------------------------------------------------------------
@@ -74,9 +74,9 @@ class ModelConfig:
     # the buffer address never changes — required for CUDAGraphs compatibility
     # (torch.compile reduce-overhead mode). Must be >= tokenizer.max_seq_len.
     max_seq_len: int = 4096
-    compile: bool = True
-    compile_mode: str = "reduce-overhead"
-    gradient_checkpointing: bool = False
+    compile: bool = False
+    compile_mode: str = "default"
+    gradient_checkpointing: bool = True
 
 
 @dataclass
@@ -113,12 +113,12 @@ class AugmentConfig:
     # Random duration stretch: ±N bins applied to each DUR_* token independently.
     # Teaches the model not to fixate on exact note lengths.
     duration_jitter_bins: int = 1
-    condition_dropout_prob: float = 0.15
+    condition_dropout_prob: float = 0.075
 
 
 @dataclass
 class TrainingConfig:
-    batch_size: int = 16
+    batch_size: int = 32
     learning_rate: float = 3.0e-4
     epochs: int = 200
     beta1: float = 0.9
@@ -146,7 +146,7 @@ class TrainingConfig:
     # ------------------------------------------------------------------
     # Polyphony-weighted chunk sampling
     # ------------------------------------------------------------------
-    polyphony_sample_weight_alpha: float = 0.5
+    polyphony_sample_weight_alpha: float = 0.0
     # ------------------------------------------------------------------
     # Source-balanced sampling weights (relative, multiplicative).
     # Natural distribution: lakh≈92%, pop909≈3%, slakh≈5%.
@@ -156,14 +156,14 @@ class TrainingConfig:
     # 0.3/1.0/0.08 → effective ~6% pop909 / 39% slakh / 55% lakh.
     # Priority: Slakh (professional) > Lakh (diverse western) > POP909 (Chinese-biased).
     # All 1.0 = uniform (natural) distribution.
-    source_weight_pop909: float = 1.0
+    source_weight_pop909: float = 0.3732
     source_weight_slakh: float = 1.0
-    source_weight_lakh: float = 1.0
+    source_weight_lakh: float = 0.1270
     # Song-level train/val split ratio. Songs are assigned deterministically
     # via SHA-256 hash of the shard filename — stable across re-runs and
     # independent of filesystem order. 0.0 = legacy stride-only split (all
     # songs appear in both train and val); recommended value = 0.2.
-    val_ratio: float = 0.0
+    val_ratio: float = 0.2
     log_every_n_steps: int = 25
     checkpoint_dir: str = "checkpoints"
     checkpoint_monitor: str = "val_loss"
