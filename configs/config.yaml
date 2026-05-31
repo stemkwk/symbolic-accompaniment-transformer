@@ -311,6 +311,24 @@ env_scaling:
     - vram_gte_gb: 14.0
       batch_scale: 1
       label: "RTX 4060Ti / 4070Ti Super / T4 / RTX 3080 Ti (16GB)"
+  # Per-system-RAM tier → TOTAL shard-cache budget (GB), split across DataLoader
+  # workers at runtime. Bounds dataset._shard_cache so it can't grow unbounded
+  # (full 18k-shard dataset ≈ 2.8 GB; ×workers would otherwise OOM small boxes).
+  # First matching tier (highest ram_gte_gb ≤ detected RAM) wins; a huge cache_gb
+  # effectively means "cache everything".
+  ram_tiers:
+    - ram_gte_gb: 64.0
+      cache_gb: 24.0          # cache the whole dataset on every worker
+      label: "64GB+ workstation/server"
+    - ram_gte_gb: 32.0
+      cache_gb: 10.0
+      label: "32GB box"
+    - ram_gte_gb: 16.0
+      cache_gb: 4.0
+      label: "16GB box"
+    - ram_gte_gb: 0.0
+      cache_gb: 2.0           # Colab (12GB) and below → minimal cache
+      label: "<16GB / Colab"
   num_workers_colab: 2
   num_workers_windows: 0
   num_workers_server_max: 8

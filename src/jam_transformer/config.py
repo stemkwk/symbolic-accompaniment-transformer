@@ -258,11 +258,21 @@ class VRAMTier:
 
 
 @dataclass
+class RAMTier:
+    """System-RAM tier → total shard-cache budget (GB). Split across DataLoader
+    workers at runtime so the dataset cache cannot grow unbounded."""
+    ram_gte_gb: float
+    cache_gb: float
+    label: str = ""
+
+
+@dataclass
 class EnvScalingConfig:
     fallback_batch_scale: int = 1
     default_precision: str = "bf16-mixed"
     cpu_precision: str = "32"
     tiers: List[VRAMTier] = field(default_factory=list)
+    ram_tiers: List[RAMTier] = field(default_factory=list)
     num_workers_colab: int = 2
     num_workers_windows: int = 0
     num_workers_server_max: int = 8
@@ -308,9 +318,10 @@ def load_config(path: str | Path) -> AppConfig:
     with path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
-    tier_dicts = (raw.get("env_scaling") or {}).get("tiers") or []
-    tiers = [VRAMTier(**t) for t in tier_dicts]
-    env_raw = {**(raw.get("env_scaling") or {}), "tiers": tiers}
+    env_scaling_raw = raw.get("env_scaling") or {}
+    tiers = [VRAMTier(**t) for t in (env_scaling_raw.get("tiers") or [])]
+    ram_tiers = [RAMTier(**t) for t in (env_scaling_raw.get("ram_tiers") or [])]
+    env_raw = {**env_scaling_raw, "tiers": tiers, "ram_tiers": ram_tiers}
 
     midi_out_raw = raw.get("midi_output") or {}
     midi_output = MidiOutputConfig(

@@ -49,6 +49,45 @@ def _fingerprint(cfg) -> str:
     ).hexdigest()[:16]
 
 
+def _total_ram_gb() -> Optional[float]:
+    """Best-effort total system RAM in GB, no external deps (no psutil)."""
+    try:
+        import os
+        if hasattr(os, "sysconf") and "SC_PHYS_PAGES" in os.sysconf_names:  # Linux/macOS
+            return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1e9
+    except Exception:
+        pass
+    try:  # Windows
+        import ctypes
+
+        class _MS(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        ms = _MS(); ms.dwLength = ctypes.sizeof(_MS)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
+        return ms.ullTotalPhys / 1e9
+    except Exception:
+        return None
+
+
+def _shard_cache_budget_gb(config) -> float:
+    """Total shard-cache budget (GB) from the RAM tier matching detected RAM.
+    Highest ram_gte_gb ≤ RAM wins; falls back to a conservative 2 GB."""
+    tiers = sorted(getattr(config.env_scaling, "ram_tiers", []) or [],
+                   key=lambda t: t.ram_gte_gb, reverse=True)
+    if not tiers:
+        return 2.0
+    ram = _total_ram_gb()
+    ram = 0.0 if ram is None else ram          # unknown → smallest tier
+    for t in tiers:
+        if ram >= t.ram_gte_gb:
+            return float(t.cache_gb)
+    return float(tiers[-1].cache_gb)
+
+
 def load_dataset_meta(data_dir: str | Path) -> Optional[dict]:
     p = Path(data_dir) / META_FILENAME
     if not p.exists():
@@ -395,19 +434,51 @@ class JamTokenDataset(Dataset):
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
+    def _init_shard_cache(self) -> None:
+        """LRU shard cache bounded by the RAM-tier budget, split per worker.
+
+        Each DataLoader worker process holds its own cache; dividing the total
+        budget by the live worker count keeps the SUM across workers bounded
+        (full 18k-shard dataset ≈ 2.8 GB; unbounded caching × workers OOMs small
+        boxes). num_workers=0 → main process → divisor 1.
+        """
+        from collections import OrderedDict
+        self._shard_cache: "OrderedDict" = OrderedDict()
+        self._cache_bytes = 0
+        total_gb = _shard_cache_budget_gb(self.config)
+        wi = torch.utils.data.get_worker_info()
+        nw = wi.num_workers if (wi is not None and wi.num_workers) else 1
+        self._cache_budget = max(64 * 1024 * 1024, int(total_gb * 1e9 / nw))
+
+    @staticmethod
+    def _entry_bytes(entry) -> int:
+        ids_full, mask_full = entry[0], entry[1]
+        return (ids_full.element_size() * ids_full.nelement()
+                + mask_full.element_size() * mask_full.nelement())
+
     def _load(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int, int]:
         shard_idx, start = self._chunks[idx]
         if not hasattr(self, "_shard_cache"):
-            self._shard_cache: dict = {}
-        if shard_idx not in self._shard_cache:
+            self._init_shard_cache()
+        cache = self._shard_cache
+        entry = cache.get(shard_idx)
+        if entry is not None:
+            cache.move_to_end(shard_idx)               # mark most-recently-used
+        else:
             data = torch.load(self.shards[shard_idx], map_location="cpu", weights_only=False)
-            self._shard_cache[shard_idx] = (
+            entry = (
                 data["ids"].long(),
                 data["mask"].bool(),
                 int(data.get("key_root", -1)),
                 int(data.get("key_mode", -1)),
             )
-        ids_full, mask_full, key_root, key_mode = self._shard_cache[shard_idx]
+            cache[shard_idx] = entry
+            self._cache_bytes += self._entry_bytes(entry)
+            # evict least-recently-used shards until within budget (keep ≥1)
+            while self._cache_bytes > self._cache_budget and len(cache) > 1:
+                _, old = cache.popitem(last=False)
+                self._cache_bytes -= self._entry_bytes(old)
+        ids_full, mask_full, key_root, key_mode = entry
         end  = start + self.max_len
         ids  = ids_full[start:end].clone()
         mask = mask_full[start:end].clone()
