@@ -194,6 +194,9 @@ class InferenceConfig:
     # 0.0 = disabled (train with polyphony_loss_boost first; enable only if
     # generated accompaniment is still too sparse after training).
     structural_suppression: float = 0.0
+    # Harmonic avoid-note soft penalty (subtracted from clashing CHROMA logits).
+    # 0.0 = disabled. Inference-only, no retraining required.
+    avoid_note_penalty: float = 0.0
 
 
 @dataclass

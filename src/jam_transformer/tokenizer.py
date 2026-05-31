@@ -117,6 +117,22 @@ CHORD_QUALITIES: List[str] = [
     "dom9",   # 11
 ]
 
+# Harmonic "avoid notes": pitch-class intervals (semitones above the chord ROOT)
+# that clash with a chord tone — typically a note a half-step above the 3rd (the
+# natural 11 over a major 3rd) which forms a b9 and sounds dissonant when held.
+# Applied at inference as a SOFT logit penalty (not a hard mask) so passing /
+# colour tones still survive. Only the textbook-clear cases are listed; qualities
+# whose avoid notes are context-dependent (min, dim, aug, …) are intentionally
+# omitted to avoid stripping legitimate harmonic colour.
+CHORD_AVOID_INTERVALS: Dict[str, frozenset] = {
+    "maj":  frozenset({5}),   # natural 4/11 vs the major 3rd
+    "maj7": frozenset({5}),
+    "dom7": frozenset({5}),
+    "dom9": frozenset({5}),
+    "add9": frozenset({5}),
+    "sus4": frozenset({4}),   # major 3rd vs the suspended 4th
+}
+
 CHORD_ROOTS_STR: List[str] = [
     "C", "Cs", "D", "Ds", "E", "F", "Fs", "G", "Gs", "A", "As", "B",
 ]

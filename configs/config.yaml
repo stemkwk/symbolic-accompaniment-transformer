@@ -221,6 +221,12 @@ inference:
   # may not have learned. Train with polyphony_loss_boost first; only enable this
   # (no retrain needed) if generated accompaniment is observed to be too sparse.
   structural_suppression: 0.0
+  # Harmonic avoid-note SOFT penalty: subtract this from the logit of any CHROMA
+  # that is an "avoid note" against the model's current chord (e.g. the natural
+  # 11 over a major 3rd). 0.0 disables. Soft (not a hard mask) so colour/passing
+  # tones survive; ~2-4 is a gentle nudge, larger values discourage more firmly.
+  # Inference-only, no retraining required.
+  avoid_note_penalty: 0.0
   # Render generated MIDI to WAV at end of inference (requires pyfluidsynth).
   render_audio: false
   soundfont: ""           # path to .sf2; empty = auto-detect system soundfonts

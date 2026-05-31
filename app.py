@@ -180,7 +180,7 @@ def _default_name() -> str:
 
 
 def _generate(melody_midi: Path, cfg, lit, tokenizer, cond_tracks,
-              temperature, top_p, cfg_w,
+              temperature, top_p, cfg_w, avoid_note_penalty=None,
               out_midi: Path | None = None) -> tuple[Path, float]:
     midi, tempo = generate_accompaniment(
         melody_midi=melody_midi,
@@ -189,6 +189,7 @@ def _generate(melody_midi: Path, cfg, lit, tokenizer, cond_tracks,
         temperature=temperature,
         top_p=top_p,
         cfg_w=cfg_w,
+        avoid_note_penalty=avoid_note_penalty,
     )
     if out_midi is None:
         out_midi = Path(tempfile.mktemp(suffix=".mid"))
@@ -209,6 +210,7 @@ def _run_simple(
     temperature: float,
     top_p: float,
     cfg_w: float,
+    avoid_note_penalty: float,
     output_name: str,
 ) -> tuple:
     cfg, lit, tokenizer = _get_state()
@@ -243,6 +245,7 @@ def _run_simple(
 
         out_midi, _ = _generate(melody_midi, cfg, lit, tokenizer,
                                  cond_tracks, temperature, top_p, cfg_w,
+                                 avoid_note_penalty,
                                  out_midi=out_dir / "accompaniment.mid")
         out_wav = _render(out_midi, cfg, out_dir / "accompaniment.wav")
 
@@ -284,6 +287,7 @@ def _run_loop(
     temperature: float,
     top_p: float,
     cfg_w: float,
+    avoid_note_penalty: float,
 ) -> tuple:
     """
     Returns:
@@ -321,6 +325,7 @@ def _run_loop(
             temperature=temperature,
             top_p=top_p,
             cfg_w=cfg_w,
+            avoid_note_penalty=avoid_note_penalty,
         )
         out_midi_path = Path(tempfile.mktemp(suffix=".mid"))
         out_midi.dump(str(out_midi_path))
@@ -373,7 +378,11 @@ def build_ui() -> gr.Blocks:
             0.0, 5.0, step=0.1, value=0.0,
             label="CFG Weight  (0 = off, 권장 1.5–3.0)",
         )
-        return temperature, top_p, cfg_w
+        avoid = gr.Slider(
+            0.0, 8.0, step=0.5, value=icfg.avoid_note_penalty,
+            label="Avoid-note Penalty  (0 = off, 화성 충돌음 억제, 권장 2–4)",
+        )
+        return temperature, top_p, cfg_w, avoid
 
     with gr.Blocks(title="JAM Transformer", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
@@ -454,7 +463,7 @@ def build_ui() -> gr.Blocks:
                         )
 
                         gr.Markdown("### 생성 파라미터")
-                        simple_temp, simple_topp, simple_cfgw = _param_sliders()
+                        simple_temp, simple_topp, simple_cfgw, simple_avoid = _param_sliders()
                         simple_btn = gr.Button("🎵 반주 생성", variant="primary", size="lg")
 
                     with gr.Column(scale=1):
@@ -473,7 +482,7 @@ def build_ui() -> gr.Blocks:
                     fn=_run_simple,
                     inputs=[simple_midi, simple_audio, simple_mic,
                             simple_denoise, simple_cond,
-                            simple_temp, simple_topp, simple_cfgw,
+                            simple_temp, simple_topp, simple_cfgw, simple_avoid,
                             simple_outname],
                     outputs=[simple_input_preview, simple_wav_out,
                              simple_mixed_out, simple_midi_out, simple_status],
@@ -524,7 +533,7 @@ def build_ui() -> gr.Blocks:
                         )
 
                         gr.Markdown("### 생성 파라미터")
-                        loop_temp, loop_topp, loop_cfgw = _param_sliders()
+                        loop_temp, loop_topp, loop_cfgw, loop_avoid = _param_sliders()
                         loop_btn = gr.Button(
                             "🎸 반주 생성 (처리 중 루프 계속 연주!)",
                             variant="primary", size="lg",
@@ -550,7 +559,7 @@ def build_ui() -> gr.Blocks:
                     fn=_run_loop,
                     inputs=[loop_mic, bpm_mode, bpm_slider,
                             loop_denoise, loop_cond,
-                            loop_temp, loop_topp, loop_cfgw],
+                            loop_temp, loop_topp, loop_cfgw, loop_avoid],
                     outputs=[loop_accomp_out, loop_mixed_out,
                              loop_midi_out, loop_status],
                 )

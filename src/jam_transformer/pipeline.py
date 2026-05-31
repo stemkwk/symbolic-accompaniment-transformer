@@ -145,6 +145,7 @@ def generate_accompaniment(
     max_new_tokens: int | None = None,
     cfg_w: float = 0.0,
     structural_suppression: float | None = None,
+    avoid_note_penalty: float | None = None,
 ) -> tuple:
     """Full generation pipeline (bar-block interleaving): melody → (midi, tempo).
 
@@ -267,6 +268,31 @@ def generate_accompaniment(
     eos_id = tokenizer.eos_id
 
     # ------------------------------------------------------------------ #
+    # 4b. Avoid-note soft penalty state
+    # ------------------------------------------------------------------ #
+    # Track the model-generated chord (SCALE_DEGREE + QUALITY) and subtract a
+    # soft penalty from CHROMA logits that are "avoid notes" against it (e.g. the
+    # natural 11 over a major 3rd). Soft, not a hard mask → colour/passing tones
+    # survive; only sustained clashes are discouraged.
+    avoid_pen = (avoid_note_penalty if avoid_note_penalty is not None
+                 else getattr(icfg, "avoid_note_penalty", 0.0))
+    use_avoid = (avoid_pen > 0.0 and tokenizer.sd_min_id >= 0
+                 and tokenizer.quality_min_id >= 0 and tokenizer.chroma_min_id >= 0)
+    cur_sd: int | None = None   # chord root pitch-class relative to key (0-11)
+    cur_q:  int | None = None   # quality index (None = no active chord / CHORD_N)
+    if use_avoid:
+        from jam_transformer.tokenizer import CHORD_AVOID_INTERVALS
+        chroma_lo = tokenizer.chroma_min_id
+        sd_lo, sd_hi = tokenizer.sd_min_id, tokenizer.sd_max_id
+        q_lo, q_hi = tokenizer.quality_min_id, tokenizer.quality_max_id
+        chord_n_id = tokenizer.chord_n_id
+        quality_avoid = [
+            CHORD_AVOID_INTERVALS.get(
+                tokenizer.id_to_token[q_lo + i].replace("QUALITY_", ""), frozenset())
+            for i in range(q_hi - q_lo + 1)
+        ]
+
+    # ------------------------------------------------------------------ #
     # 5. Step helper (single forward, returns last-position logits)
     # ------------------------------------------------------------------ #
     @torch.no_grad()
@@ -331,12 +357,25 @@ def generate_accompaniment(
 
         for _ in range(block_budget):
             logits_use = last_logits
+            _cloned = False
             if use_struct_supp and all_ids and (vel_lo <= all_ids[-1] <= vel_hi):
-                logits_use = logits_use.clone()
+                logits_use = logits_use.clone(); _cloned = True
                 logits_use[:, struct_idx_t] -= struct_supp
+            if use_avoid and cur_sd is not None and cur_q is not None and quality_avoid[cur_q]:
+                if not _cloned:
+                    logits_use = logits_use.clone(); _cloned = True
+                for _iv in quality_avoid[cur_q]:
+                    logits_use[:, chroma_lo + ((cur_sd + _iv) % 12)] -= avoid_pen
 
             next_tok = DecoderTransformer._sample(logits_use, temperature, top_k, top_p)
             next_id = int(next_tok.item())
+            if use_avoid:                       # track the active chord
+                if sd_lo <= next_id <= sd_hi:
+                    cur_sd = next_id - sd_lo
+                elif q_lo <= next_id <= q_hi:
+                    cur_q = next_id - q_lo
+                elif next_id == chord_n_id:
+                    cur_q = None                # explicit "no chord" → no penalty
 
             if next_id == eos_id:
                 done = True
