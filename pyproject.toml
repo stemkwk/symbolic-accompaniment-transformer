@@ -61,3 +61,10 @@ demo = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Put the project root on sys.path so tests can `from scripts.prepare_data import …`
+# (scripts/ is a namespace dir, not an installed package). Replaces the old
+# root-level conftest.py sys.path hack; conftest.py now lives under tests/.
+pythonpath = ["."]
+testpaths = ["tests"]
