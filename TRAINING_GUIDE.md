@@ -69,9 +69,13 @@ PowerShell 프롬프트(`PS C:\...>`)로 돌아온 뒤 명령을 입력하세요
 ## 1. 저장소 클론
 
 ```powershell
-git clone https://github.com/stemkwk/symbolic-accompaniment-transformer.git
+git clone -b feat/single-stream-accompaniment https://github.com/stemkwk/symbolic-accompaniment-transformer.git
 cd symbolic-accompaniment-transformer
 ```
+
+> ⚠️ **`-b feat/single-stream-accompaniment` 를 빼지 마세요.** 학습 코드와 2단계의 데이터(릴리스 v3.1.0)는
+> 이 브랜치 기준입니다. 기본 브랜치(`main`)를 받으면 코드가 데이터와 맞지 않아 학습이 거부됩니다.
+> 이미 잘못 받았다면 `git checkout feat/single-stream-accompaniment` 로 전환하면 됩니다.
 
 ---
 
@@ -228,6 +232,11 @@ docker compose run --rm train `
 - 기본 200 epoch 상한 + 조기 종료. **그냥 두면 알아서 가장 좋은 모델에서 멈춥니다.**
 - 시간이 부족하면 상한을 줄여서: `... --epochs 50`
 - **밤새/며칠 돌리기**: 창을 닫지 말고 두거나, 중간에 `Ctrl+C`로 멈춰도 됩니다.
+
+> ⚠️ **중단은 반드시 `Ctrl+C` 로만.** `Ctrl+C`는 진행 중인 체크포인트 쓰기를 끝낸 뒤 안전하게 멈춥니다.
+> 반면 **작업관리자 강제 종료·창 닫기·`kill`** 로 끊으면, 하필 체크포인트를 저장하던 순간이면 `.ckpt`
+> 파일이 깨질 수 있습니다(파일을 못 읽는 손상 상태). 깨졌다면 그 파일을 지우고 직전 체크포인트로
+> `--resume` 하면 됩니다.
 
 **중단했다가 이어서 하기** (전원·재부팅 후에도):
 
