@@ -22,11 +22,22 @@ services:
       # Triton JIT compile parallelism. 1 = safe default for all VRAM tiers.
       # Raise to 4-8 on 24GB+ machines for faster first-step kernel compilation.
       - TORCHINDUCTOR_COMPILE_THREADS=1
+    # Gradio web demo (app.py) listens here. Published only when the container
+    # is started with `--service-ports` (training runs ignore it).
+    ports:
+      - "7860:7860"
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./logs:/app/logs
       - ./output:/app/output
+      # soundfonts/ is gitignored (comes from jam_soundfonts.zip) — mount it so
+      # the demo can render MIDI → WAV inside the container.
+      - ./soundfonts:/app/soundfonts
+      # app.py lives at the repo root and is NOT baked into the image (the
+      # Dockerfile only COPYs src/configs/scripts/tests). Mount it so the demo
+      # runs against an already-built training image without a rebuild.
+      - ./app.py:/app/app.py
     deploy:
       resources:
         reservations:
