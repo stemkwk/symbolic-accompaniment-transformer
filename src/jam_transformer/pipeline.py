@@ -146,8 +146,16 @@ def generate_accompaniment(
     cfg_w: float = 0.0,
     structural_suppression: float | None = None,
     avoid_note_penalty: float | None = None,
+    include_melody: bool = True,
+    comp_pattern: str | None = None,
+    comp_max_voices: int = 4,
 ) -> tuple:
     """Full generation pipeline (bar-block interleaving): melody → (midi, tempo).
+
+    *include_melody* controls whether the input melody is bundled into the
+    returned MIDI alongside the generated accompaniment. True (default) yields a
+    complete, playable arrangement; False yields the accompaniment track alone
+    (useful when the caller already has the melody and only wants the new part).
 
     Inference strategy
     ------------------
@@ -449,8 +457,21 @@ def generate_accompaniment(
             e.bar = e.bar + first_bar
             acc_events.append(e)
 
+    if comp_pattern:
+        from jam_transformer.utils.comping import redistribute_accompaniment
+        n_before = len(acc_events)
+        acc_events = redistribute_accompaniment(
+            acc_events, cfg.tokenizer, comp_pattern, comp_max_voices,
+            melody_events=melody_events,
+        )
+        logger.info(
+            f"Comping '{comp_pattern}' applied: {n_before} → {len(acc_events)} "
+            f"acc notes (max {comp_max_voices} voices/onset)."
+        )
+
+    out_events = [*melody_events, *acc_events] if include_melody else acc_events
     midi = events_to_midi(
-        [*melody_events, *acc_events], cfg.tokenizer,
+        out_events, cfg.tokenizer,
         tempo_bpm=tempo,
         programs=cfg.midi_output.programs,
     )

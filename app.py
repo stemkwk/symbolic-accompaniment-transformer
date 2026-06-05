@@ -151,15 +151,19 @@ def _loop_and_mix(melody_wav: Path, accomp_wav: Path, out_path: Path) -> None:
     sr_m, mel = wavfile.read(str(melody_wav))
     sr_a, acc = wavfile.read(str(accomp_wav))
 
-    # Mono-ify
+    # Normalise to float32 [-1, 1] BEFORE mono-ifying. Order matters:
+    # `arr.mean(axis=1)` on an int16 array promotes to float64 while keeping the
+    # raw ±32767 magnitude, and _to_f32 only rescales *integer* dtypes — so a
+    # mono-ify-first ordering would smuggle un-normalised values past _to_f32
+    # and saturate the mix to full-scale. Normalise first, then average channels.
+    mel = _to_f32(mel)
+    acc = _to_f32(acc)
+
+    # Mono-ify (mean of [-1, 1] floats stays in [-1, 1])
     if mel.ndim > 1:
         mel = mel.mean(axis=1)
     if acc.ndim > 1:
         acc = acc.mean(axis=1)
-
-    # Normalise both tracks to float32 [-1, 1] before any arithmetic
-    mel = _to_f32(mel)
-    acc = _to_f32(acc)
 
     # Simple resample if sample rates differ (linear interp)
     if sr_m != sr_a:
@@ -181,6 +185,7 @@ def _default_name() -> str:
 
 def _generate(melody_midi: Path, cfg, lit, tokenizer, cond_tracks,
               temperature, top_p, cfg_w, avoid_note_penalty=None,
+              comp_pattern: str | None = None,
               out_midi: Path | None = None) -> tuple[Path, float]:
     midi, tempo = generate_accompaniment(
         melody_midi=melody_midi,
@@ -190,6 +195,8 @@ def _generate(melody_midi: Path, cfg, lit, tokenizer, cond_tracks,
         top_p=top_p,
         cfg_w=cfg_w,
         avoid_note_penalty=avoid_note_penalty,
+        include_melody=False,   # 반주만 — 멜로디는 input.wav / mixed.wav로 따로 제공
+        comp_pattern=comp_pattern,
     )
     if out_midi is None:
         out_midi = Path(tempfile.mktemp(suffix=".mid"))
@@ -211,9 +218,11 @@ def _run_simple(
     top_p: float,
     cfg_w: float,
     avoid_note_penalty: float,
+    comp_pattern_str: str,
     output_name: str,
 ) -> tuple:
     cfg, lit, tokenizer = _get_state()
+    comp_pattern = None if comp_pattern_str in (None, "", "없음") else comp_pattern_str
     acfg = cfg.audio_input
     cond_tracks = [t.strip() for t in cond_tracks_str.split(",") if t.strip()]
 
@@ -245,7 +254,7 @@ def _run_simple(
 
         out_midi, _ = _generate(melody_midi, cfg, lit, tokenizer,
                                  cond_tracks, temperature, top_p, cfg_w,
-                                 avoid_note_penalty,
+                                 avoid_note_penalty, comp_pattern,
                                  out_midi=out_dir / "accompaniment.mid")
         out_wav = _render(out_midi, cfg, out_dir / "accompaniment.wav")
 
@@ -326,6 +335,7 @@ def _run_loop(
             top_p=top_p,
             cfg_w=cfg_w,
             avoid_note_penalty=avoid_note_penalty,
+            include_melody=False,   # 루프 스테이션: 반주 레이어만 — 멜로디는 루프로 재생 중
         )
         out_midi_path = Path(tempfile.mktemp(suffix=".mid"))
         out_midi.dump(str(out_midi_path))
@@ -464,6 +474,15 @@ def build_ui() -> gr.Blocks:
 
                         gr.Markdown("### 생성 파라미터")
                         simple_temp, simple_topp, simple_cfgw, simple_avoid = _param_sliders()
+                        simple_comp = gr.Dropdown(
+                            choices=["없음", "auto", "arp_up", "arp_updown",
+                                     "alberti", "broken", "quarter", "backbeat"],
+                            value="auto",
+                            label="컴핑/분산화음",
+                            info="auto=멜로디 밀도·프레이즈 자동 선택(권장) / "
+                                 "arp_up=상행 아르페지오 / alberti=알베르티 / "
+                                 "broken=베이스+분산화음 / quarter=매 박 / backbeat=2·4박",
+                        )
                         simple_btn = gr.Button("🎵 반주 생성", variant="primary", size="lg")
 
                     with gr.Column(scale=1):
@@ -483,7 +502,7 @@ def build_ui() -> gr.Blocks:
                     inputs=[simple_midi, simple_audio, simple_mic,
                             simple_denoise, simple_cond,
                             simple_temp, simple_topp, simple_cfgw, simple_avoid,
-                            simple_outname],
+                            simple_comp, simple_outname],
                     outputs=[simple_input_preview, simple_wav_out,
                              simple_mixed_out, simple_midi_out, simple_status],
                 )

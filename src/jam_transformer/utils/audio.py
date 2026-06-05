@@ -220,75 +220,20 @@ def apply_dsp(wav_path: Path, out_path: Path, dsp_cfg) -> None:
     logger.info(f"DSP applied ({len(effects)} effects) → {out_path}")
 
 
-def render_midi_to_wav(midi_path: Path, wav_path: Path,
-                       soundfont: str, sample_rate: int) -> None:
-    """Render a MIDI file to WAV using FluidSynth.
+def _render_via_cli(midi_path: Path, wav_path: Path,
+                    sf_path: str, sample_rate: int) -> bool:
+    """Offline render via the fluidsynth CLI (`-F` fast file renderer).
 
-    Strategy (in order):
-      1. pyfluidsynth midi_to_audio()     — newest API
-      2. pyfluidsynth file audio driver   — reliable on all platforms
-      3. fluidsynth CLI via subprocess    — last resort
-    Requires: pip install 'jam_transformer[render]'  (pyfluidsynth)
-    *soundfont* is tried first; if missing, common system paths are searched.
+    This is the most reliable path: it runs in an isolated subprocess with no
+    audio driver and no background threads, so it cannot race with the parent
+    process. Returns True on success.
     """
-    sf_path = _find_soundfont(soundfont)
-    if sf_path is None:
-        return
-
-    try:
-        import fluidsynth
-    except ImportError:
-        logger.warning("pyfluidsynth not installed; skipping WAV render.")
-        return
-
-    # ── 방법 1: midi_to_audio() (pyfluidsynth 최신) ─────────────────────────
-    try:
-        fs = fluidsynth.Synth(samplerate=float(sample_rate))
-        fs.sfload(sf_path)
-        if hasattr(fs, "midi_to_audio"):
-            fs.midi_to_audio(str(midi_path), str(wav_path))
-            fs.delete()
-            logger.info(f"Rendered WAV → {wav_path}")
-            return
-        fs.delete()
-    except Exception as e:
-        logger.debug(f"midi_to_audio 실패: {e}")
-
-    # ── 방법 2: file 오디오 드라이버 (pyfluidsynth Player API) ──────────────
-    try:
-        fs = fluidsynth.Synth(samplerate=float(sample_rate))
-        fs.setting("audio.driver", "file")
-        fs.setting("audio.file.name", str(wav_path))
-        fs.setting("audio.file.type", "wav")
-        fs.setting("player.timing-source", "sample")
-        fs.setting("synth.lock-memory", 0)
-        fs.sfload(sf_path)
-        fs.start(driver="file")
-
-        player = fluidsynth.Player(fs)
-        player.add(str(midi_path))
-        player.play()
-        player.join()
-        player.stop()
-        fs.delete()
-
-        if wav_path.exists():
-            logger.info(f"Rendered WAV → {wav_path}")
-            return
-    except Exception as e:
-        logger.debug(f"file driver 실패: {e}")
-
-    # ── 방법 3: fluidsynth CLI subprocess ────────────────────────────────────
     import shutil
     import subprocess
 
     fluidsynth_bin = shutil.which("fluidsynth")
     if fluidsynth_bin is None:
-        logger.warning(
-            "WAV 렌더링 실패 — pyfluidsynth API와 CLI 모두 사용 불가.\n"
-            "  Windows: winget install FluidSynth.FluidSynth 후 재시도"
-        )
-        return
+        return False
 
     cmd = [
         fluidsynth_bin, "-ni",
@@ -299,6 +244,65 @@ def render_midi_to_wav(midi_path: Path, wav_path: Path,
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 or not wav_path.exists():
         logger.warning(f"fluidsynth CLI 실패:\n{result.stderr}")
+        return False
+    return True
+
+
+def _render_via_pyfluidsynth(midi_path: Path, wav_path: Path,
+                             sf_path: str, sample_rate: int) -> bool:
+    """Offline render via pyfluidsynth's midi_to_audio() (no audio driver).
+
+    Fallback for platforms without the fluidsynth CLI (e.g. native Windows).
+    Only midi_to_audio() is used — it renders fully offline. The realtime
+    `file` audio-driver + Player path was removed: when Player binding is
+    missing it starts a driver thread bound to the output WAV and then crashes
+    before cleanup, leaking a thread that overwrites the file with silence.
+    Returns True on success.
+    """
+    try:
+        import fluidsynth
+    except ImportError:
+        return False
+
+    fs = None
+    try:
+        fs = fluidsynth.Synth(samplerate=float(sample_rate))
+        fs.sfload(sf_path)
+        if not hasattr(fs, "midi_to_audio"):
+            return False
+        fs.midi_to_audio(str(midi_path), str(wav_path))
+        return wav_path.exists()
+    except Exception as e:
+        logger.debug(f"midi_to_audio 실패: {e}")
+        return False
+    finally:
+        if fs is not None:
+            fs.delete()
+
+
+def render_midi_to_wav(midi_path: Path, wav_path: Path,
+                       soundfont: str, sample_rate: int) -> None:
+    """Render a MIDI file to WAV using FluidSynth.
+
+    Strategy (both fully offline — no realtime audio driver, no leaked threads):
+      1. fluidsynth CLI `-F`          — isolated subprocess, most reliable
+      2. pyfluidsynth midi_to_audio() — fallback when the CLI isn't installed
+    *soundfont* is tried first; if missing, common system paths are searched.
+    Requires: the fluidsynth binary or pip install 'jam_transformer[render]'.
+    """
+    sf_path = _find_soundfont(soundfont)
+    if sf_path is None:
+        return
+
+    ok = _render_via_cli(midi_path, wav_path, sf_path, sample_rate) \
+        or _render_via_pyfluidsynth(midi_path, wav_path, sf_path, sample_rate)
+
+    if not ok:
+        logger.warning(
+            "WAV 렌더링 실패 — fluidsynth CLI와 pyfluidsynth 모두 사용 불가.\n"
+            "  Linux:   apt install fluidsynth\n"
+            "  Windows: winget install FluidSynth.FluidSynth 후 재시도"
+        )
         return
 
     logger.info(f"Rendered WAV → {wav_path}")
