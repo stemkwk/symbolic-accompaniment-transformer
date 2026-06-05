@@ -142,7 +142,7 @@ training:
   # 한 위치에서 연속 스택 허용 최대 깊이.
   # 이 이상 쌓이면 boost를 0으로 꺼서 "더 쌓기" 압력을 제거 → 모델이 자연스럽게
   # 다음 위치로 넘어가는 법을 학습.
-  polyphony_max_stack: 3
+  polyphony_max_stack: 4
   # 위치 전진 보상: BAR/POS 토큰이 target이고 직전 입력이 VEL일 때 (= 스택 후
   # 다음 위치로 이동하는 결정) loss를 이 비율로 down-weight.
   # 값이 작을수록 "전진"이 쉬워짐 (0.5 = 전진 결정의 loss를 절반으로 줄임).
