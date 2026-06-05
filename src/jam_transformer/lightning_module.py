@@ -52,6 +52,9 @@ class JamTransformerLightning(pl.LightningModule):
         struct_ids = tok.structural_ids()
         self._struct_min_id = int(min(struct_ids))
         self._struct_max_id = int(max(struct_ids))
+        # Cached ranges for the W&B harmony/rhythm quality metrics (val only).
+        self._pos_min_id, self._pos_max_id = tok.pos_id_range
+        self._ppb = int(config.tokenizer.positions_per_bar)
 
         # Optional torch.compile. We do it here (not in setup()) so the
         # compiled module is what Lightning's checkpoint code serialises.
@@ -69,7 +72,7 @@ class JamTransformerLightning(pl.LightningModule):
     # ------------------------------------------------------------------
     # Forward / loss
     # ------------------------------------------------------------------
-    def _compute_loss(self, batch) -> tuple[torch.Tensor, float]:
+    def _compute_loss(self, batch, return_logits: bool = False):
         """Cross-entropy with token-type weighting + polyphony loss boost.
 
         Weight composition (multiplicative, per target position):
@@ -138,7 +141,64 @@ class JamTransformerLightning(pl.LightningModule):
             raw_denom = base_mask.sum().clamp(min=1.0)
             raw_loss  = (per_token * base_mask).sum() / raw_denom
             ppl = torch.exp(raw_loss).item()
+        if return_logits:
+            return loss, ppl, logits
         return loss, ppl
+
+    # ------------------------------------------------------------------
+    # Quality metrics for W&B (rhythm + harmony), validation-only.
+    # Cheap teacher-forced proxies: compare the model's argmax predictions to
+    # the ground-truth tokens on accompaniment-target positions. No expensive
+    # autoregressive sampling. These surface the beat-1 / cluster collapse
+    # EARLY (within a few epochs) instead of only after listening.
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def _quality_metrics(self, x, y, logits, loss_mask) -> dict:
+        out = {
+            "val_rhythm/pred_pos0_share":     0.0,  # model onset share on beat-1 pos (collapse ↑)
+            "val_rhythm/gt_pos0_share":       0.0,  # data baseline (~0.19)
+            "val_rhythm/pred_pos_entropy":    0.0,  # spread of onsets over 16 positions (collapse ↓)
+            "val_rhythm/gt_pos_entropy":      0.0,
+            "val_rhythm/pred_stack_rate":     0.0,  # P(stack another note | after VEL) (cluster ↑)
+            "val_rhythm/gt_stack_rate":       0.0,
+            "val_harmony/pred_chroma_entropy": 0.0,  # pitch-class diversity (degenerate harmony ↓)
+            "val_harmony/gt_chroma_entropy":   0.0,
+        }
+        preds = logits.argmax(dim=-1)
+        m  = loss_mask.reshape(-1).bool()
+        xf = x.reshape(-1)[m]
+        yf = y.reshape(-1)[m]
+        pf = preds.reshape(-1)[m]
+
+        plo, phi = self._pos_min_id, self._pos_max_id
+        clo, chi = self._chroma_min_id, self._chroma_max_id
+        vlo, vhi = self._vel_min_id, self._vel_max_id
+
+        def _profile(ids, lo, hi, nbins):
+            sel = ids[(ids >= lo) & (ids <= hi)] - lo
+            if sel.numel() == 0:
+                return None
+            c = torch.bincount(sel, minlength=nbins).float()
+            p = c / c.sum()
+            nz = p[p > 0]
+            return p[0].item(), float(-(nz * nz.log()).sum())
+
+        for tag, ids in (("pred", pf), ("gt", yf)):
+            prof = _profile(ids, plo, phi, self._ppb)
+            if prof is not None:
+                out[f"val_rhythm/{tag}_pos0_share"]  = prof[0]
+                out[f"val_rhythm/{tag}_pos_entropy"] = prof[1]
+            ce = _profile(ids, clo, chi, chi - clo + 1)
+            if ce is not None:
+                out[f"val_harmony/{tag}_chroma_entropy"] = ce[1]
+
+        after_vel = (xf >= vlo) & (xf <= vhi)
+        if bool(after_vel.any()):
+            def _stack_rate(ids):
+                return float(((ids >= clo) & (ids <= chi)).float().mean())
+            out["val_rhythm/pred_stack_rate"] = _stack_rate(pf[after_vel])
+            out["val_rhythm/gt_stack_rate"]   = _stack_rate(yf[after_vel])
+        return out
 
     def training_step(self, batch, batch_idx):
         loss, ppl = self._compute_loss(batch)
@@ -152,9 +212,17 @@ class JamTransformerLightning(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, ppl = self._compute_loss(batch)
+        loss, ppl, logits = self._compute_loss(batch, return_logits=True)
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val_ppl",  ppl,  prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        # Harmony + rhythm quality metrics → W&B / CSV (collapse early-warning).
+        x, y, loss_mask = batch
+        metrics = self._quality_metrics(x, y, logits, loss_mask)
+        # pos0_share is the headline collapse signal → show on the progress bar.
+        self.log("val_rhythm/pred_pos0_share", metrics.pop("val_rhythm/pred_pos0_share"),
+                 prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        for k, v in metrics.items():
+            self.log(k, v, on_step=False, on_epoch=True, sync_dist=True)
         return loss
 
     # ------------------------------------------------------------------
