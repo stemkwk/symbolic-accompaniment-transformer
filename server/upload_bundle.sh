@@ -126,15 +126,17 @@ fi
 if [[ -n "${BUNDLE:-}" ]]; then
     BUNDLE_PATH="${BUNDLE}"
 else
-    # Prefer .tgz; fall back to .tar.zst, .tar
-    # zst를 먼저 탐색 — package_for_server.py 기본 출력이 .tar.zst
-    for _candidate in jam_tx_bundle.tar.zst jam_tx_bundle.tgz jam_tx_bundle.tar; do
+    # zst를 먼저 탐색 — package_for_server.py 기본 출력이 .tar.zst.
+    # 기본 출력 위치는 bundles/ (package_for_server.py) → 거기부터 본 뒤 루트도 확인.
+    for _candidate in \
+        bundles/jam_tx_bundle.tar.zst bundles/jam_tx_bundle.tgz bundles/jam_tx_bundle.tar \
+        jam_tx_bundle.tar.zst jam_tx_bundle.tgz jam_tx_bundle.tar; do
         if [[ -f "${_candidate}" ]]; then
             BUNDLE_PATH="${_candidate}"
             break
         fi
     done
-    : "${BUNDLE_PATH:?No bundle found. Run: python scripts/package_for_server.py}"
+    : "${BUNDLE_PATH:?No bundle found (looked in bundles/ and ./). Run: python scripts/tools/package_for_server.py}"
 fi
 
 [[ -f "${BUNDLE_PATH}" ]] || { echo "Bundle not found: ${BUNDLE_PATH}"; exit 1; }
