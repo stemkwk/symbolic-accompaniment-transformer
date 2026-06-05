@@ -222,10 +222,19 @@ def _apply_init_weights(lit_model, init_path: str) -> None:
     ckpt = torch.load(init_path, map_location="cpu", weights_only=False)
     sd = ckpt.get("state_dict", ckpt)
     model_keys = set(lit_model.state_dict().keys())
-    # If the saved checkpoint was torch.compile'd but this run isn't (or vice
-    # versa), normalise the '_orig_mod.' segment so keys line up.
-    if not any("_orig_mod" in k for k in model_keys):
+    # torch.compile inserts a '._orig_mod.' segment into state-dict keys. The
+    # checkpoint and the current run may disagree (e.g. seed trained compile=
+    # false, this run COMPILE=true). Normalise BOTH directions so the weights
+    # line up — this is what lets warm-start coexist with torch.compile.
+    model_has_orig = any("_orig_mod" in k for k in model_keys)
+    ckpt_has_orig  = any("_orig_mod" in k for k in sd)
+    if ckpt_has_orig and not model_has_orig:
+        # checkpoint compiled, this run isn't → strip the prefix
         sd = {k.replace("._orig_mod.", "."): v for k, v in sd.items()}
+    elif model_has_orig and not ckpt_has_orig:
+        # this run compiled, checkpoint isn't → insert the prefix after 'model.'
+        sd = {(k.replace("model.", "model._orig_mod.", 1) if k.startswith("model.") else k): v
+              for k, v in sd.items()}
     missing, unexpected = lit_model.load_state_dict(sd, strict=False)
     # token_weight is a non-persistent buffer → legitimately "missing"; ignore it.
     real_missing = [k for k in missing if not k.endswith("token_weight")]
