@@ -524,22 +524,35 @@ class REMITokenizer(BaseTokenizer):
 
     def build_token_weight_vector(
         self, struct_weight: float, content_weight: float,
+        pos_weight: float | None = None,
     ) -> "list[float]":
         """Per-id weight vector for CE loss scaling.
 
         Weight assignment:
-          structural (BAR/POS/TRACK/TEMPO)  → struct_weight
+          structural (BAR/TRACK/TEMPO)      → struct_weight
+          POS_n (rhythm — WHEN a note plays)→ pos_weight (defaults to struct_weight)
           content (CHROMA/OCTAVE/DUR/VEL)   → content_weight
           SCALE_DEGREE / QUALITY            → content_weight  (harmonic decisions)
           CHORD_N                           → struct_weight   (placeholder)
           KEY_*                             → struct_weight   (global anchor)
           specials (PAD/BOS/SEP/EOS)        → 1.0
+
+        POS tokens are split out of the structural bucket: they encode the
+        rhythmic placement of notes, so up-weighting them (pos_weight >
+        struct_weight) teaches the model WHEN to play without touching chord
+        size (which the polyphony boost controls independently).
         """
+        if pos_weight is None:
+            pos_weight = struct_weight
         w = [1.0] * self.vocab_size
         for tid in self.structural_ids():
             w[tid] = struct_weight
         for tid in self.content_ids():
             w[tid] = content_weight
+        # POS gets its own weight (override the struct_weight set above)
+        pos_lo, pos_hi = self.pos_id_range
+        for tid in range(pos_lo, pos_hi + 1):
+            w[tid] = pos_weight
         for tid in range(self._sd_min_id, self._sd_max_id + 1):
             w[tid] = content_weight
         for tid in range(self._quality_min_id, self._quality_max_id + 1):

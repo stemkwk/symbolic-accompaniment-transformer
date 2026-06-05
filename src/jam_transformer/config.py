@@ -137,19 +137,21 @@ class TrainingConfig:
     # ------------------------------------------------------------------
     # Token-type-aware loss weighting
     # ------------------------------------------------------------------
-    loss_struct_weight: float = 0.3       # BAR / POS / TRACK / TEMPO targets
+    loss_struct_weight: float = 0.3       # BAR / TRACK / TEMPO targets (easy)
     loss_content_weight: float = 1.5      # CHROMA / OCTAVE / DUR / VEL targets
+    # POS_n targets encode WHEN a note plays (rhythm). Split out of the
+    # structural bucket and up-weighted so the model learns rhythmic placement.
+    # This is the horizontal (timing) lever; the polyphony boost is the vertical
+    # (chord-size) lever — they are independent, so this does not push toward
+    # monophony. 0.0 / None → falls back to loss_struct_weight.
+    loss_pos_weight: float = 1.5
     # ------------------------------------------------------------------
-    # Polyphony loss boost
+    # Polyphony loss boost  (vertical lever — keeps chords, guards monophony)
     # ------------------------------------------------------------------
     polyphony_loss_boost: float = 1.3
     # Max consecutive stacks at the same position before boost is zeroed.
     # Prevents the model from learning to dump arbitrarily large clusters.
     polyphony_max_stack: int = 4
-    # Down-weight factor for BAR/POS "position-advance" decisions that follow
-    # a VEL token.  < 1.0 makes it easier for the model to move to the next
-    # position rather than always stacking more notes.  1.0 = no effect.
-    position_advance_weight: float = 0.6
     # ------------------------------------------------------------------
     # Polyphony-weighted chunk sampling
     # ------------------------------------------------------------------

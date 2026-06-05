@@ -36,9 +36,10 @@ class JamTransformerLightning(pl.LightningModule):
         tcfg = config.training
         w_struct  = float(getattr(tcfg, "loss_struct_weight",  1.0))
         w_content = float(getattr(tcfg, "loss_content_weight", 1.0))
+        w_pos     = float(getattr(tcfg, "loss_pos_weight", w_struct))
         self.register_buffer(
             "token_weight",
-            torch.tensor(tok.build_token_weight_vector(w_struct, w_content),
+            torch.tensor(tok.build_token_weight_vector(w_struct, w_content, w_pos),
                          dtype=torch.float32),
             persistent=False,
         )
@@ -46,9 +47,8 @@ class JamTransformerLightning(pl.LightningModule):
         self._vel_max_id    = int(tok.vel_max_id)
         self._chroma_min_id = int(tok.chroma_min_id)
         self._chroma_max_id = int(tok.chroma_max_id)
-        self.polyphony_loss_boost    = float(getattr(tcfg, "polyphony_loss_boost", 1.0))
-        self.polyphony_max_stack     = int(getattr(tcfg, "polyphony_max_stack", 0))
-        self.position_advance_weight = float(getattr(tcfg, "position_advance_weight", 1.0))
+        self.polyphony_loss_boost = float(getattr(tcfg, "polyphony_loss_boost", 1.0))
+        self.polyphony_max_stack  = int(getattr(tcfg, "polyphony_max_stack", 0))
         struct_ids = tok.structural_ids()
         self._struct_min_id = int(min(struct_ids))
         self._struct_max_id = int(max(struct_ids))
@@ -100,52 +100,34 @@ class JamTransformerLightning(pl.LightningModule):
 
         # 2) Polyphony boost: target is CHROMA AND previous input was VEL
         #    → this position decides to stack another note at the same (bar, pos).
-        #    Stack-depth cap: count how many consecutive VEL→CHROMA pairs have
-        #    occurred without an intervening BAR/POS token.  Once the count
-        #    exceeds polyphony_max_stack the boost is zeroed — the model stops
-        #    getting rewarded for dumping more notes at the same position.
+        #    Stack-depth cap: count how many consecutive VEL→CHROMA stack
+        #    decisions have occurred since the last structural token (BAR/POS/
+        #    TRACK/TEMPO, which marks a position advance). Once the count exceeds
+        #    polyphony_max_stack the boost is zeroed — the model stops getting
+        #    rewarded for dumping more notes at the same position. Vectorised as
+        #    a segmented cumulative sum (reset at structural tokens).
         if self.polyphony_loss_boost != 1.0:
             is_chroma_target = (flat_y >= self._chroma_min_id) & (flat_y <= self._chroma_max_id)
             is_vel_prev      = (flat_x >= self._vel_min_id)    & (flat_x <= self._vel_max_id)
             poly_mask = (is_chroma_target & is_vel_prev).float()
 
             if self.polyphony_max_stack > 0:
-                # Build a running consecutive-stack count per sequence position.
-                # We do this on CPU with a simple loop (B*T is small relative to
-                # the forward pass; no need for a CUDA kernel).
                 B, T = x.shape
-                stack_count = torch.zeros(B * T, dtype=torch.long, device=x.device)
-                flat_is_struct = ((flat_x >= self._struct_min_id) &
-                                  (flat_x <= self._struct_max_id))
-                counts = torch.zeros(B, dtype=torch.long, device=x.device)
-                for t in range(B * T):
-                    b = t // T
-                    if flat_is_struct[t]:
-                        counts[b] = 0           # position advanced → reset
-                    elif is_vel_prev[t] and is_chroma_target[t]:
-                        counts[b] += 1          # another stack at same position
-                    stack_count[t] = counts[b]
-                # zero the boost for positions past the cap
-                within_cap = (stack_count <= self.polyphony_max_stack).float()
+                inc   = (is_vel_prev & is_chroma_target).view(B, T).long()
+                reset = ((flat_x >= self._struct_min_id) &
+                         (flat_x <= self._struct_max_id)).view(B, T)
+                # running count of stacks, reset to 0 at each structural token.
+                # cum is non-decreasing → most-recent reset has the largest cum
+                # among resets so far, so cummax recovers the segment baseline.
+                cum = inc.cumsum(dim=1)
+                reset_cum = torch.where(reset, cum, torch.zeros_like(cum))
+                baseline  = torch.cummax(reset_cum, dim=1).values
+                stack_count = (cum - baseline).view(-1)
+                within_cap  = (stack_count <= self.polyphony_max_stack).float()
                 poly_mask = poly_mask * within_cap
 
             poly_w = 1.0 + (self.polyphony_loss_boost - 1.0) * poly_mask
             type_w = type_w * poly_w
-
-        # 3) Position-advance reward: target is BAR/POS AND previous input was VEL
-        #    → model chose to move forward instead of stacking more notes.
-        #    Down-weight the CE loss at these positions so the model is less
-        #    penalised for "wrong" advance timing — making forward movement easier.
-        if (self.position_advance_weight != 1.0
-                and self._struct_min_id >= 0 and self._struct_max_id >= 0):
-            is_struct_target = ((flat_y >= self._struct_min_id) &
-                                (flat_y <= self._struct_max_id))
-            is_vel_prev_adv  = ((flat_x >= self._vel_min_id) &
-                                (flat_x <= self._vel_max_id))
-            advance_mask = (is_struct_target & is_vel_prev_adv).float()
-            # values < 1.0 reduce the weight on these positions (easier to advance)
-            advance_w = 1.0 - (1.0 - self.position_advance_weight) * advance_mask
-            type_w = type_w * advance_w
 
         weight = base_mask * type_w                          # (B*T,)
         denom  = weight.sum().clamp(min=1.0)

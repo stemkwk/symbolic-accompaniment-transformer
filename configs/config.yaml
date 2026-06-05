@@ -129,25 +129,24 @@ training:
   # ------------------------------------------------------------------
   # Token-type-aware loss weighting (see config.py:TrainingConfig)
   # ------------------------------------------------------------------
-  # Structural tokens (BAR/POS/TRACK/TEMPO) are easy to predict — down-weight
+  # Structural tokens (BAR/TRACK/TEMPO) are easy to predict — down-weight
   # so the optimiser focuses on PITCH/DUR/VEL where the music lives.
   loss_struct_weight: 0.3
   loss_content_weight: 1.5
+  # POS_n(=언제 치는가, 리듬)은 structural에서 분리해 가중치를 올림.
+  # 수평(타이밍) 레버 — 코드 두께(수직)는 polyphony boost가 따로 담당하므로
+  # 이 값을 올려도 단선율로 가지 않음. 모델이 GT의 온셋 위치를 충실히 학습.
+  loss_pos_weight: 1.5
   # 폴리포닉 결정(VEL → PITCH 이어지는 같은-위치 코드 추가) 손실 가중치.
   # POP909 GT는 위치의 49% 가 코드이지만 epoch 10 모델은 11% → 모델이 코드를
   # 적극적으로 생성하도록 boost. 1.0 = 비활성.
   # ⚠ 2.0은 한 위치에 무한정 쌓는 방향으로 과교정돼 1박 클러스터 붕괴를 만들었음.
-  # 1.3으로 완화: 코드 쌓기 장려는 유지하되 극단적인 클러스터 붕괴 억제.
+  # 1.3으로 완화 + max_stack 캡: 코드는 유지(수직, 단선율 방지)하되 클러스터 억제.
   polyphony_loss_boost: 1.3
   # 한 위치에서 연속 스택 허용 최대 깊이.
   # 이 이상 쌓이면 boost를 0으로 꺼서 "더 쌓기" 압력을 제거 → 모델이 자연스럽게
-  # 다음 위치로 넘어가는 법을 학습.
+  # 다음 위치로 넘어가는 법을 학습. 4 = root+3+5+7 (7th 코드).
   polyphony_max_stack: 4
-  # 위치 전진 보상: BAR/POS 토큰이 target이고 직전 입력이 VEL일 때 (= 스택 후
-  # 다음 위치로 이동하는 결정) loss를 이 비율로 down-weight.
-  # 값이 작을수록 "전진"이 쉬워짐 (0.5 = 전진 결정의 loss를 절반으로 줄임).
-  # 폴리포니 boost와 역방향으로 작용해 단선율↔클러스터 사이 균형을 맞춤.
-  position_advance_weight: 0.6
   # 폴리포니가 풍부한 chunk를 더 자주 샘플링 (WeightedRandomSampler).
   # weight = (poly_score + 0.01) ** alpha. 0.0 = 균등.
   # DISABLED: redundant with polyphony_loss_boost (both push polyphony) and
