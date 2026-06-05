@@ -142,7 +142,14 @@ class TrainingConfig:
     # ------------------------------------------------------------------
     # Polyphony loss boost
     # ------------------------------------------------------------------
-    polyphony_loss_boost: float = 2.0
+    polyphony_loss_boost: float = 1.3
+    # Max consecutive stacks at the same position before boost is zeroed.
+    # Prevents the model from learning to dump arbitrarily large clusters.
+    polyphony_max_stack: int = 3
+    # Down-weight factor for BAR/POS "position-advance" decisions that follow
+    # a VEL token.  < 1.0 makes it easier for the model to move to the next
+    # position rather than always stacking more notes.  1.0 = no effect.
+    position_advance_weight: float = 0.6
     # ------------------------------------------------------------------
     # Polyphony-weighted chunk sampling
     # ------------------------------------------------------------------
