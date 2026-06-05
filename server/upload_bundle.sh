@@ -158,6 +158,24 @@ rsync \
 echo ""
 echo "✔ Transfer complete."
 
+# ── Ensure the extraction tool exists on the remote ──────────────────────────
+# .tar.zst bundles need the `zstd` CLI to unpack. Many GPU base images ship
+# without it, so install it here (chicken-and-egg: you can't run a script from
+# inside the bundle until the bundle is extracted). Best-effort; never fatal.
+case "${_bn:-$(basename "${BUNDLE_PATH}")}" in
+    *.tar.zst)
+        echo "→ ensuring 'zstd' on remote (needed to extract .tar.zst) ..."
+        ssh ${_SSH_OPTS} "${_HOST}" '
+            if ! command -v zstd >/dev/null 2>&1; then
+                (apt-get update -qq && apt-get install -y -qq zstd) \
+                || yum install -y zstd \
+                || echo "  ! could not auto-install zstd — run: apt-get install -y zstd"
+            fi
+            command -v zstd >/dev/null 2>&1 && echo "  zstd ready: $(zstd --version 2>&1 | head -1)"
+        ' || echo "  ! remote zstd check failed (install manually if extraction errors)"
+        ;;
+esac
+
 # ── SHA-256 integrity check ─────────────────────────────────────────────────
 if [[ "${SKIP_VERIFY}" != "1" ]]; then
     # Look for a .sha256 file next to the bundle (written by package_for_server.py)

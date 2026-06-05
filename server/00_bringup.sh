@@ -63,17 +63,25 @@ print(f"target_tracks         : {meta['target_tracks']}")
 PY
 
 log_section "Runtime dependencies"
-# curl is required by the AUTO_SHUTDOWN monitor in 20_train.sh to call
-# the RunPod GraphQL API. Fail here, before training, so you're not stuck
-# with a running pod after training finishes and curl is missing.
-if command -v curl >/dev/null 2>&1; then
-    log_step "curl : $(curl --version | head -1)"
-else
-    log_warn "curl not found — installing now (needed for AUTO_SHUTDOWN)."
-    apt-get install -y curl 2>/dev/null || \
-    yum install -y curl 2>/dev/null || \
-    log_fail "Could not install curl. Install manually: apt-get install -y curl"
-fi
+# System tools the workflow relies on:
+#   curl — AUTO_SHUTDOWN monitor in 20_train.sh calls the RunPod GraphQL API.
+#   zstd — extracting / re-bundling .tar.zst archives (package_for_server.py).
+# Install any that are missing so you're not stuck mid-workflow.
+_apt_updated=0
+_ensure_tool() {   # _ensure_tool <cmd> <apt-pkg> <why>
+    local cmd="$1" pkg="$2" why="$3"
+    if command -v "${cmd}" >/dev/null 2>&1; then
+        log_step "${cmd} : $(${cmd} --version 2>&1 | head -1)"
+        return 0
+    fi
+    log_warn "${cmd} not found — installing now (${why})."
+    if [[ "${_apt_updated}" == "0" ]]; then apt-get update -qq 2>/dev/null || true; _apt_updated=1; fi
+    apt-get install -y -qq "${pkg}" 2>/dev/null || \
+    yum install -y "${pkg}" 2>/dev/null || \
+    log_warn "Could not auto-install ${pkg}. Install manually: apt-get install -y ${pkg}"
+}
+_ensure_tool curl curl "needed for AUTO_SHUTDOWN"
+_ensure_tool zstd zstd "needed to extract / re-pack .tar.zst bundles"
 
 log_section "Network Volume"
 # detect_volume aborts (exit 1) when REQUIRE_VOLUME=1 (default) and no
