@@ -75,7 +75,8 @@ kill -TERM $(cat logs/*.pid)
 | `LR`                 | config.yaml | peak learning rate |
 | `COMPILE`            | config.yaml | `true`/`false` — torch.compile 활성화 |
 | `RUN_NAME`           | `<base>-<timestamp>` | log 파일명 + W&B run name |
-| `RESUME`             | (none) | `.ckpt` 경로 또는 `auto` (last.ckpt 자동 탐색) |
+| `RESUME`             | (none) | `.ckpt` 경로 또는 `auto` (last.ckpt 자동 탐색). 전체 상태(optimizer/LR/epoch) 복원 |
+| `INIT_WEIGHTS`       | (none) | `.ckpt` 경로 또는 `auto` (newest best*.ckpt). **가중치만** 로드 + optimizer/LR **새로**(재워밍업). 목적함수 바꿔 fine-tune할 때. RESUME과 배타적 |
 | `FOREGROUND`         | `0` | `1` = 현재 셸에 붙어서 실행 (디버깅용) |
 | `EXTRA`              | (none) | `train.py`에 추가 전달, e.g. `"--set model.d_model=768"` |
 | `AUTO_SHUTDOWN`      | `1` | 학습 정상 종료 후 Pod 자동 halt. 크래시 시에는 halt 안 함. |

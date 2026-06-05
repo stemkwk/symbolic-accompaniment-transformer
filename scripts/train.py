@@ -207,12 +207,57 @@ def _dry_run(model, train_loader, steps: int, precision: str,
 # ---------------------------------------------------------------------------
 # Main entry
 # ---------------------------------------------------------------------------
+def _apply_init_weights(lit_model, init_path: str) -> None:
+    """Load ONLY model weights from a checkpoint into a fresh LightningModule.
+
+    Unlike ``--resume`` (which restores optimizer + LR-scheduler + epoch state
+    via ``trainer.fit(ckpt_path=...)``), this seeds the weights and lets the
+    optimizer / cosine schedule start fresh — so the LR re-warms up. That is
+    what lets a warm-started run actually *move* its weights (resuming a decayed
+    cosine LR ≈ 0 barely updates anything and can't unlearn a collapsed prior).
+
+    Handles Lightning (``model.`` prefix) and torch.compile (``_orig_mod.``)
+    checkpoints. Vocab/shape mismatches surface as missing/unexpected keys.
+    """
+    ckpt = torch.load(init_path, map_location="cpu", weights_only=False)
+    sd = ckpt.get("state_dict", ckpt)
+    model_keys = set(lit_model.state_dict().keys())
+    # If the saved checkpoint was torch.compile'd but this run isn't (or vice
+    # versa), normalise the '_orig_mod.' segment so keys line up.
+    if not any("_orig_mod" in k for k in model_keys):
+        sd = {k.replace("._orig_mod.", "."): v for k, v in sd.items()}
+    missing, unexpected = lit_model.load_state_dict(sd, strict=False)
+    # token_weight is a non-persistent buffer → legitimately "missing"; ignore it.
+    real_missing = [k for k in missing if not k.endswith("token_weight")]
+    logger.info(
+        f"init_weights: seeded from {init_path} "
+        f"(loaded, fresh optimizer/scheduler — LR will re-warm up)"
+    )
+    if real_missing:
+        logger.warning(
+            f"init_weights: {len(real_missing)} weight keys NOT found in checkpoint "
+            f"(architecture/vocab drift?): {real_missing[:5]}"
+            f"{'...' if len(real_missing) > 5 else ''}"
+        )
+    if unexpected:
+        logger.warning(
+            f"init_weights: {len(unexpected)} checkpoint keys unused: "
+            f"{unexpected[:5]}{'...' if len(unexpected) > 5 else ''}"
+        )
+    if real_missing and len(real_missing) > len(model_keys) // 2:
+        raise SystemExit(
+            "init_weights: more than half the model weights failed to load — "
+            "wrong checkpoint or incompatible architecture. Aborting."
+        )
+
+
 def train(
     config: AppConfig,
     data_dir: str,
     ckpt_path: Optional[str] = None,
     fast_dev_run: bool = False,
     run_name: Optional[str] = None,
+    init_weights: Optional[str] = None,
 ) -> None:
     if not os.path.exists(data_dir):
         raise SystemExit(
@@ -373,6 +418,12 @@ def train(
         config, vocab_size=tokenizer.vocab_size, total_steps=total_steps
     )
     logger.info(f"model params: {model.model.num_parameters() / 1e6:.2f} M")
+
+    # Warm-start: seed weights from an existing checkpoint but keep a FRESH
+    # optimizer / LR schedule (≠ --resume, which restores the decayed LR).
+    if init_weights:
+        _apply_init_weights(model, init_weights)
+
     torch.set_float32_matmul_precision("high")
 
     # ---- Dry-run path: never enters Lightning's trainer ----
@@ -407,7 +458,14 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None)
-    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Full-state resume (weights + optimizer + LR schedule "
+                             "+ epoch). Continues a run where it left off.")
+    parser.add_argument("--init_weights", type=str, default=None,
+                        help="Warm-start: load ONLY model weights from this .ckpt, "
+                             "then train with a FRESH optimizer/LR schedule (LR "
+                             "re-warms up). Use to fine-tune an existing model under "
+                             "a changed objective. Mutually exclusive with --resume.")
     parser.add_argument("--fast_dev_run", action="store_true",
                         help="Lightning fast_dev_run for quick wiring check.")
     parser.add_argument("--dry_run_steps", type=int, default=None,
@@ -423,6 +481,13 @@ def main() -> None:
     parser.add_argument("positional_overrides", nargs="*", default=[],
                         help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.resume and args.init_weights:
+        raise SystemExit(
+            "--resume and --init_weights are mutually exclusive: "
+            "--resume continues a run (keeps optimizer/LR), --init_weights "
+            "starts fresh from seeded weights (re-warms LR). Pick one."
+        )
 
     cfg = load_config(args.config)
     all_overrides = list(args.overrides)
@@ -443,7 +508,8 @@ def main() -> None:
         cfg.training.dry_run_steps = args.dry_run_steps
 
     train(cfg, args.data_dir, ckpt_path=args.resume,
-          fast_dev_run=args.fast_dev_run, run_name=args.run_name)
+          fast_dev_run=args.fast_dev_run, run_name=args.run_name,
+          init_weights=args.init_weights)
 
 
 if __name__ == "__main__":

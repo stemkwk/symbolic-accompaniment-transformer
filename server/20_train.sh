@@ -132,6 +132,24 @@ if [[ -n "${RESUME_VAL}" ]]; then
     ARGS+=("--resume" "${RESUME_VAL}")
 fi
 
+# Warm-start: seed weights from a checkpoint but start a FRESH optimizer / LR
+# schedule (LR re-warms up). Use to fine-tune an existing model under a changed
+# objective. Mutually exclusive with RESUME.
+#   INIT_WEIGHTS=auto              → newest best*.ckpt (Volume → local)
+#   INIT_WEIGHTS=/path/to/x.ckpt   → explicit
+INIT_VAL="${INIT_WEIGHTS:-}"
+if [[ "${INIT_VAL}" == "auto" ]]; then
+    INIT_VAL="$(ls -t "${CKPT_DIR}"/best*.ckpt "${PROJECT_ROOT}/checkpoints"/best*.ckpt \
+                2>/dev/null | head -1 || true)"
+    [[ -n "${INIT_VAL}" ]] && log_step "auto init_weights from ${INIT_VAL}" \
+                          || log_fail "INIT_WEIGHTS=auto but no best*.ckpt found."
+fi
+if [[ -n "${INIT_VAL}" ]]; then
+    [[ -n "${RESUME_VAL}" ]] && log_fail "INIT_WEIGHTS and RESUME are mutually exclusive."
+    [[ -f "${INIT_VAL}" ]]   || log_fail "INIT_WEIGHTS='${INIT_VAL}' not found."
+    ARGS+=("--init_weights" "${INIT_VAL}")
+fi
+
 if [[ -n "${EXTRA:-}" ]]; then
     # shellcheck disable=SC2206
     EXTRA_ARGS=( ${EXTRA} )
